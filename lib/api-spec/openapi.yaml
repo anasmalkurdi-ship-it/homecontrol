@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: tuya
+    description: Tuya Cloud device operations
 paths:
   /healthz:
     get:
@@ -24,6 +26,72 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /tuya/connection:
+    get:
+      operationId: getTuyaConnection
+      tags: [tuya]
+      summary: Check Tuya Cloud connection
+      responses:
+        "200":
+          description: Tuya connection status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TuyaConnection"
+  /tuya/devices:
+    get:
+      operationId: getTuyaDevices
+      tags: [tuya]
+      summary: List devices linked to the Tuya account
+      responses:
+        "200":
+          description: Linked Tuya devices
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TuyaDeviceList"
+  /tuya/devices/{deviceId}/controls:
+    get:
+      operationId: getTuyaDeviceControls
+      tags: [tuya]
+      summary: Read a device's available controls and current state
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Device controls and state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TuyaDeviceControls"
+  /tuya/devices/{deviceId}/commands:
+    post:
+      operationId: sendTuyaDeviceCommands
+      tags: [tuya]
+      summary: Send supported commands to a Tuya device
+      parameters:
+        - name: deviceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TuyaCommandRequest"
+      responses:
+        "200":
+          description: Command result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TuyaCommandResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +101,98 @@ components:
           type: string
       required:
         - status
+    TuyaConnection:
+      type: object
+      properties:
+        configured:
+          type: boolean
+        connected:
+          type: boolean
+        deviceCount:
+          type: [integer, "null"]
+        message:
+          type: string
+      required: [configured, connected, deviceCount, message]
+    TuyaStatusPoint:
+      type: object
+      properties:
+        code:
+          type: string
+        value:
+          type: boolean
+      required: [code, value]
+    TuyaDevice:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        online:
+          type: boolean
+        status:
+          type: array
+          items:
+            $ref: "#/components/schemas/TuyaStatusPoint"
+      required: [id, name, category, online, status]
+    TuyaDeviceList:
+      type: object
+      properties:
+        devices:
+          type: array
+          items:
+            $ref: "#/components/schemas/TuyaDevice"
+      required: [devices]
+    TuyaFunction:
+      type: object
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+        values:
+          type: string
+      required: [code, name, type, values]
+    TuyaDeviceControls:
+      type: object
+      properties:
+        deviceId:
+          type: string
+        online:
+          type: boolean
+        functions:
+          type: array
+          items:
+            $ref: "#/components/schemas/TuyaFunction"
+        status:
+          type: array
+          items:
+            $ref: "#/components/schemas/TuyaStatusPoint"
+      required: [deviceId, online, functions, status]
+    TuyaCommand:
+      type: object
+      properties:
+        code:
+          type: string
+        value: {}
+      required: [code, value]
+    TuyaCommandRequest:
+      type: object
+      properties:
+        commands:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TuyaCommand"
+      required: [commands]
+    TuyaCommandResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+      required: [success]
 

@@ -1,6 +1,10 @@
 import React from 'react';
-import { Platform, StyleSheet, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, useColorScheme, View } from 'react-native';
 import { useColors } from '@/hooks/useColors';
+import { Redirect } from 'expo-router';
+import { useAuth } from '@clerk/expo';
+import { useEffect } from 'react';
+import { setAuthTokenGetter } from '@workspace/api-client-react';
 import { Feather } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { isLiquidGlassAvailable } from 'expo-glass-effect';
@@ -81,5 +85,21 @@ function ClassicTabLayout() {
 }
 
 export default function TabLayout() {
+  const colors = useColors();
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+
+  useEffect(() => {
+    setAuthTokenGetter(isSignedIn ? () => getToken() : null);
+    return () => setAuthTokenGetter(null);
+  }, [getToken, isSignedIn]);
+
+  if (!isLoaded) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+        <ActivityIndicator color={colors.primary} />
+      </View>
+    );
+  }
+  if (!isSignedIn) return <Redirect href="/(auth)/sign-in" />;
   return <ClassicTabLayout />;
 }
