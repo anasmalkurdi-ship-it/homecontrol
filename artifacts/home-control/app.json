@@ -7,6 +7,9 @@
     "icon": "./assets/images/icon.png",
     "scheme": "home-control",
     "userInterfaceStyle": "automatic",
+    "splash": {
+      "backgroundColor": "#F3F0E8"
+    },
     "ios": {
       "supportsTablet": false
     },
