@@ -1,1 +1,1 @@
-- [Tuya connection scope](tuya-connection-scope.md) — keep the current controls as local previews until sign-in and cloud access are explicitly enabled.
+- [Tuya connection scope](tuya-connection-scope.md) — prioritize direct local pairing/control; do not rely on Tuya Cloud unless the user re-approves it.

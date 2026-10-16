@@ -1,10 +1,10 @@
 ---
 name: Tuya connection scope
-description: The user's decision to defer live Tuya control while building the room-management interface.
+description: The user's preference for direct local device pairing instead of Tuya Cloud control.
 ---
 
-The user chose to build the rooms interface only for now rather than add sign-in. Keep room and device tiles local to the phone and clearly labeled as previews; do not connect to Tuya or send device commands until the user asks to enable secure sign-in and cloud control.
+The user wants to pair and control devices directly from Home Control rather than through Tuya Cloud. Do not continue cloud account linkage unless the user re-approves it. Distinguish first-time Wi-Fi/Bluetooth onboarding from local control of devices already paired in Smart Life; verify official SDK and device support before choosing an approach. Treat a supplied APK as a reference, not as an executable library or source project.
 
-**Why:** Sending cloud commands without authentication could expose control of the user's home devices.
+**Why:** The user explicitly changed direction and asked to pair devices from this app without using the cloud.
 
-**How to apply:** Preserve the preview-only behavior in future UI or backend changes unless the user explicitly expands the scope.
+**How to apply:** Ask which direct-device flow they want, inspect any supplied APK for relevant metadata and supported workflows, and confirm device compatibility before implementing direct pairing.
