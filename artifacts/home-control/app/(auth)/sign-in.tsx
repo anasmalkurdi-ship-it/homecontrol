@@ -86,7 +86,7 @@ export default function SignInScreen() {
       subtitle={
         isVerifying
           ? 'Enter the code we sent to your email.'
-          : 'Sign in to see and control the devices in your home.'
+          : 'Sign in to view your rooms and device tiles.'
       }
     >
       {isVerifying ? (

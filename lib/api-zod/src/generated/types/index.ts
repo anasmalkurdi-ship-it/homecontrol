@@ -7,12 +7,3 @@
  */
 
 export * from './healthStatus';
-export * from './tuyaCommand';
-export * from './tuyaCommandRequest';
-export * from './tuyaCommandResponse';
-export * from './tuyaConnection';
-export * from './tuyaDevice';
-export * from './tuyaDeviceControls';
-export * from './tuyaDeviceList';
-export * from './tuyaFunction';
-export * from './tuyaStatusPoint';

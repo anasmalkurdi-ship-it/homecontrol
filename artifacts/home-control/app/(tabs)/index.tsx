@@ -1,18 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useClerk } from '@clerk/expo';
-import {
-  getGetTuyaConnectionQueryKey,
-  getGetTuyaDeviceControlsQueryKey,
-  getGetTuyaDeviceControlsQueryOptions,
-  getGetTuyaDevicesQueryKey,
-  useGetTuyaConnection,
-  useGetTuyaDevices,
-  useGetTuyaDeviceControls,
-  useSendTuyaDeviceCommands,
-} from '@workspace/api-client-react';
-import type { TuyaDevice } from '@workspace/api-client-react';
-import { useQueries, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -52,9 +40,6 @@ type HomeControl = {
   roomId: string;
   name: string;
   kind: DeviceKind;
-  previewOn: boolean;
-  tuyaDeviceId?: string;
-  switchCode?: string;
   wattage?: number;
 };
 
@@ -121,25 +106,6 @@ function isDeviceKind(value: unknown): value is DeviceKind {
   );
 }
 
-function findPowerFunction(
-  functions: Array<{ code: string; type: string }>,
-) {
-  return functions.find(
-    (item) =>
-      item.type.toLowerCase() === 'boolean' &&
-      /(^|_)(switch|power|relay|on_off)(_|$)/i.test(item.code),
-  );
-}
-
-function parseBooleanState(value: unknown): boolean | null {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'string') {
-    if (value.toLowerCase() === 'true') return true;
-    if (value.toLowerCase() === 'false') return false;
-  }
-  return null;
-}
-
 function parseHomeData(raw: string | null): HomeData {
   if (!raw) return EMPTY_DATA;
   const parsed: unknown = JSON.parse(raw);
@@ -166,16 +132,20 @@ function parseHomeData(raw: string | null): HomeData {
           roomIds.has(control.roomId) &&
           typeof control.name === 'string' &&
           isDeviceKind(control.kind) &&
-          typeof control.previewOn === 'boolean' &&
-          (control.tuyaDeviceId === undefined ||
-            typeof control.tuyaDeviceId === 'string') &&
-          (control.switchCode === undefined ||
-            typeof control.switchCode === 'string') &&
           (control.wattage === undefined ||
             (typeof control.wattage === 'number' &&
               Number.isFinite(control.wattage) &&
               control.wattage >= 0)),
       )
+        .map((control) => ({
+          id: control.id,
+          roomId: control.roomId,
+          name: control.name,
+          kind: control.kind,
+          ...(typeof control.wattage === 'number'
+            ? { wattage: control.wattage }
+            : {}),
+        }))
     : [];
 
   const activeRoomId =
@@ -186,7 +156,7 @@ function parseHomeData(raw: string | null): HomeData {
   return { rooms, controls, activeRoomId };
 }
 
-function LiveTuyaControlCard({
+function UnpairedControlCard({
   control,
   onOpenSettings,
 }: {
@@ -194,111 +164,34 @@ function LiveTuyaControlCard({
   onOpenSettings: () => void;
 }) {
   const colors = useColors();
-  const queryClient = useQueryClient();
   const longPressTriggered = useRef(false);
   const definition = deviceKinds.find((kind) => kind.key === control.kind);
-  const deviceId = control.tuyaDeviceId ?? '';
-  const controlsQuery = useGetTuyaDeviceControls(deviceId, {
-    query: {
-      queryKey: getGetTuyaDeviceControlsQueryKey(deviceId),
-      enabled: !!control.tuyaDeviceId,
-      retry: false,
-      refetchInterval: 20_000,
-    },
-  });
-  const mutation = useSendTuyaDeviceCommands({
-    mutation: {
-      onSuccess: async (_result, variables) => {
-        const queryKey = getGetTuyaDeviceControlsQueryKey(variables.deviceId);
-        await queryClient.invalidateQueries({ queryKey });
-      },
-    },
-  });
-
-  const switchFunction =
-    controlsQuery.data?.functions.find(
-      (item) => item.code === control.switchCode,
-    ) ?? findPowerFunction(controlsQuery.data?.functions ?? []);
-  const switchCode = control.switchCode ?? switchFunction?.code;
-  const switchState =
-    switchCode === undefined
-      ? null
-      : parseBooleanState(
-          controlsQuery.data?.status.find((item) => item.code === switchCode)
-            ?.value,
-        );
-  const isOffline = controlsQuery.data?.online === false;
-  const isUnavailable =
-    switchState === null ||
-    isOffline ||
-    controlsQuery.isLoading ||
-    mutation.isPending;
-  const toggle = () => {
-    if (
-      !switchCode ||
-      switchState === null ||
-      isOffline ||
-      mutation.isPending ||
-      !control.tuyaDeviceId
-    ) {
-      return;
-    }
-    mutation.mutate({
-      deviceId: control.tuyaDeviceId,
-      data: { commands: [{ code: switchCode, value: !switchState }] },
-    });
-    void Haptics.selectionAsync();
-  };
   const openSettings = () => {
     longPressTriggered.current = true;
     onOpenSettings();
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
-  const handlePress = () => {
-    if (longPressTriggered.current) {
-      longPressTriggered.current = false;
-      return;
-    }
-    toggle();
-  };
-  const statusLabel = controlsQuery.isLoading
-    ? 'Reading Tuya status…'
-    : controlsQuery.isError
-      ? 'Could not load device'
-      : isOffline
-        ? 'Offline · Tuya'
-        : switchState === null
-          ? 'No supported on/off status'
-          : switchState
-            ? 'On · Tuya'
-            : 'Off · Tuya';
 
   return (
     <Pressable
       onPressIn={() => {
         longPressTriggered.current = false;
       }}
-      onPress={handlePress}
       onLongPress={openSettings}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'longpress') openSettings();
       }}
       delayLongPress={500}
-      accessibilityRole="switch"
-      accessibilityState={{
-        checked: switchState === true,
-        disabled: isUnavailable,
-      }}
-      accessibilityLabel={`${control.name} Tuya switch`}
-      accessibilityHint="Tap anywhere to toggle. Press and hold for device settings."
+      accessibilityRole="button"
+      accessibilityLabel={`${control.name}, not paired`}
+      accessibilityHint="Device control is unavailable in this build. Press and hold for device settings."
       accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
-      testID={`toggle-control-${control.id}`}
+      testID={`unpaired-control-${control.id}`}
       style={({ pressed }) => [
         styles.controlCard,
         {
           backgroundColor: colors.card,
           borderColor: colors.border,
-          opacity: isUnavailable ? 0.7 : 1,
         },
         pressed && styles.pressed,
       ]}
@@ -306,16 +199,13 @@ function LiveTuyaControlCard({
       <View
         style={[
           styles.deviceIconWrap,
-          {
-            backgroundColor:
-              switchState === true ? colors.accent + '55' : colors.secondary,
-          },
+          { backgroundColor: colors.secondary },
         ]}
       >
         <MaterialCommunityIcons
           name={definition?.icon ?? 'lightbulb-outline'}
           size={21}
-          color={switchState === true ? colors.accentForeground : colors.primary}
+          color={colors.primary}
         />
       </View>
       <View style={styles.deviceInfo}>
@@ -329,55 +219,28 @@ function LiveTuyaControlCard({
           <View
             style={[
               styles.previewDot,
-              {
-                backgroundColor:
-                  switchState === true
-                    ? colors.accent
-                    : switchState === false
-                      ? colors.mutedForeground
-                      : colors.destructive,
-              },
+              { backgroundColor: colors.mutedForeground },
             ]}
           />
           <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-            {statusLabel}
+            Not paired in this build
           </Text>
         </View>
-        {mutation.isError && (
-          <Text style={{ color: colors.destructive, fontSize: 9, marginTop: 3 }}>
-            Command failed. Try again.
-          </Text>
-        )}
       </View>
       <View
         style={[
           styles.stateBadge,
-          {
-            backgroundColor:
-              switchState === true ? colors.accent + '33' : colors.secondary,
-          },
+          { backgroundColor: colors.secondary },
         ]}
       >
-        {mutation.isPending ? (
-          <ActivityIndicator
-            size="small"
-            color={switchState === true ? colors.primaryForeground : colors.primary}
-          />
-        ) : (
-          <Text
-            style={[
-              styles.stateBadgeText,
-              {
-                color:
-                  switchState === true
-                    ? colors.accentForeground
-                    : colors.mutedForeground,
-              },
-            ]}
-          >
-            {switchState === true ? 'On' : switchState === false ? 'Off' : '—'}
-          </Text>
-        )}
+        <Text
+          style={[
+            styles.stateBadgeText,
+            { color: colors.mutedForeground },
+          ]}
+        >
+          Not paired
+        </Text>
       </View>
     </Pressable>
   );
@@ -385,7 +248,6 @@ function LiveTuyaControlCard({
 
 export default function HomeScreen() {
   const colors = useColors();
-  const queryClient = useQueryClient();
   const { signOut } = useClerk();
   const insets = useSafeAreaInsets();
   const [data, setData] = useState<HomeData>(EMPTY_DATA);
@@ -398,63 +260,6 @@ export default function HomeScreen() {
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
-  const [selectedTuyaDeviceId, setSelectedTuyaDeviceId] = useState<string | null>(
-    null,
-  );
-  const [linkMessage, setLinkMessage] = useState<string | null>(null);
-  const longPressedControlIds = useRef<Set<string>>(new Set());
-
-  const connectionQuery = useGetTuyaConnection({
-    query: {
-      queryKey: getGetTuyaConnectionQueryKey(),
-      retry: false,
-      staleTime: 45_000,
-      refetchInterval: 60_000,
-    },
-  });
-  const devicesQuery = useGetTuyaDevices({
-    query: {
-      queryKey: getGetTuyaDevicesQueryKey(),
-      enabled: dialog === 'control',
-      retry: false,
-      staleTime: 30_000,
-    },
-  });
-  const selectedDeviceControlsQuery = useGetTuyaDeviceControls(
-    selectedTuyaDeviceId ?? '',
-    {
-      query: {
-        queryKey: getGetTuyaDeviceControlsQueryKey(
-          selectedTuyaDeviceId ?? '',
-        ),
-        enabled: dialog === 'control' && !!selectedTuyaDeviceId,
-        retry: false,
-      },
-    },
-  );
-  const linkedTuyaDeviceIds = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          data.controls
-            .map((control) => control.tuyaDeviceId)
-            .filter((deviceId): deviceId is string => !!deviceId),
-        ),
-      ),
-    [data.controls],
-  );
-  const tuyaStatusQueries = useQueries({
-    queries: linkedTuyaDeviceIds.map((deviceId) =>
-      getGetTuyaDeviceControlsQueryOptions(deviceId, {
-        query: {
-            queryKey: getGetTuyaDeviceControlsQueryKey(deviceId),
-          retry: false,
-          staleTime: 20_000,
-          refetchInterval: 30_000,
-        },
-      }),
-    ),
-  });
 
   useEffect(() => {
     let mounted = true;
@@ -491,88 +296,6 @@ export default function HomeScreen() {
       data.controls.filter((control) => control.roomId === activeRoom?.id),
     [activeRoom?.id, data.controls],
   );
-  const activeLoad = useMemo(() => {
-    const queryIndexByDeviceId = new Map(
-      linkedTuyaDeviceIds.map((deviceId, index) => [deviceId, index] as const),
-    );
-    let activeControls = 0;
-    let unknownStatusCount = 0;
-    let missingWattageCount = 0;
-    let watts = 0;
-
-    for (const control of data.controls) {
-      let isOn: boolean | null;
-
-      if (control.tuyaDeviceId) {
-        const queryIndex = queryIndexByDeviceId.get(control.tuyaDeviceId);
-        const query =
-          queryIndex === undefined ? undefined : tuyaStatusQueries[queryIndex];
-        const deviceData = query?.data;
-        if (!deviceData || query?.isError || deviceData.online === false) {
-          unknownStatusCount += 1;
-          continue;
-        }
-        const switchCode =
-          control.switchCode ??
-          findPowerFunction(deviceData.functions ?? [])?.code;
-        isOn = switchCode
-          ? parseBooleanState(
-              deviceData.status.find((status) => status.code === switchCode)
-                ?.value,
-            )
-          : null;
-      } else {
-        isOn = control.previewOn;
-      }
-
-      if (isOn === null) {
-        unknownStatusCount += 1;
-        continue;
-      }
-      if (!isOn) continue;
-
-      activeControls += 1;
-      if (typeof control.wattage === 'number') {
-        watts += control.wattage;
-      } else {
-        missingWattageCount += 1;
-      }
-    }
-
-    return { activeControls, unknownStatusCount, missingWattageCount, watts };
-  }, [data.controls, linkedTuyaDeviceIds, tuyaStatusQueries]);
-  const assignedDeviceIds = useMemo(
-    () =>
-      new Set(
-        data.controls
-          .map((control) => control.tuyaDeviceId)
-          .filter((id): id is string => !!id),
-      ),
-    [data.controls],
-  );
-  const availableDevices = useMemo(
-    () =>
-      (devicesQuery.data?.devices ?? []).filter(
-        (device) => !assignedDeviceIds.has(device.id),
-      ),
-    [assignedDeviceIds, devicesQuery.data?.devices],
-  );
-  const selectedTuyaDevice = useMemo(
-    () =>
-      availableDevices.find((device) => device.id === selectedTuyaDeviceId) ??
-      null,
-    [availableDevices, selectedTuyaDeviceId],
-  );
-  const selectedSwitchFunction = useMemo(
-    () =>
-      selectedDeviceControlsQuery.data?.functions.find(
-        (item) =>
-          item.type.toLowerCase() === 'boolean' &&
-          /(switch|power|relay|on_off)/i.test(item.code),
-      ) ?? null,
-    [selectedDeviceControlsQuery.data?.functions],
-  );
-
   const openRoomDialog = () => {
     setRoomName('');
     setDialog('room');
@@ -581,8 +304,6 @@ export default function HomeScreen() {
   const openControlDialog = () => {
     setSelectedKind('chandelier');
     setControlName('Chandelier');
-    setSelectedTuyaDeviceId(null);
-    setLinkMessage(null);
     setDialog('control');
   };
 
@@ -601,40 +322,18 @@ export default function HomeScreen() {
 
   const addControl = () => {
     if (!activeRoom) return;
-    if (!selectedTuyaDevice || !selectedSwitchFunction) {
-      setLinkMessage(
-        'Choose a linked device with an available on/off control.',
-      );
-      return;
-    }
     const control = {
       id: createId(),
       roomId: activeRoom.id,
-      name: controlName.trim() || selectedTuyaDevice.name,
+      name: controlName.trim() || selectedDefinition?.defaultName || 'Device',
       kind: selectedKind,
-      previewOn: false,
-      tuyaDeviceId: selectedTuyaDevice.id,
-      switchCode: selectedSwitchFunction.code,
     };
     setData((current) => ({
       ...current,
       controls: [...current.controls, control],
     }));
     setDialog(null);
-    setSelectedTuyaDeviceId(null);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  };
-
-  const toggleControl = (controlId: string) => {
-    setData((current) => ({
-      ...current,
-      controls: current.controls.map((control) =>
-        control.id === controlId
-          ? { ...control, previewOn: !control.previewOn }
-          : control,
-      ),
-    }));
-    void Haptics.selectionAsync();
   };
 
   const openControlSettings = (controlId: string) => {
@@ -676,7 +375,7 @@ export default function HomeScreen() {
   const removeControl = (controlId: string, name: string) => {
     Alert.alert(
       'Remove from room?',
-      `Remove “${name}” from this room? It will remain linked in Tuya.`,
+      `Remove “${name}” from this room?`,
       [
       { text: 'Keep', style: 'cancel' },
       {
@@ -700,21 +399,12 @@ export default function HomeScreen() {
   };
 
   const leaveHome = () => {
-    queryClient.clear();
     void signOut();
   };
 
   const selectedDefinition = deviceKinds.find(
     (kind) => kind.key === selectedKind,
   );
-  const formattedActiveWatts = Number(activeLoad.watts.toFixed(1)).toLocaleString();
-  const activeWattageLabel =
-    activeLoad.unknownStatusCount > 0
-      ? '— W'
-      : activeLoad.missingWattageCount > 0
-        ? `≥ ${formattedActiveWatts} W`
-        : `${formattedActiveWatts} W`;
-
   if (!ready) {
     return (
       <View style={[styles.loading, { backgroundColor: colors.background }]}>
@@ -758,46 +448,6 @@ export default function HomeScreen() {
           </View>
         </View>
         <View style={styles.headerActions}>
-          <View
-            style={[
-              styles.previewBadge,
-              {
-                backgroundColor: connectionQuery.data?.connected
-                  ? colors.accent + '42'
-                  : colors.secondary,
-              },
-            ]}
-          >
-            <MaterialCommunityIcons
-              name={
-                connectionQuery.data?.connected
-                  ? 'cloud-check-outline'
-                  : 'cloud-alert-outline'
-              }
-              size={15}
-              color={
-                connectionQuery.data?.connected
-                  ? colors.accentForeground
-                  : colors.mutedForeground
-              }
-            />
-            <Text
-              style={[
-                styles.previewBadgeText,
-                {
-                  color: connectionQuery.data?.connected
-                    ? colors.accentForeground
-                    : colors.mutedForeground,
-                },
-              ]}
-            >
-              {connectionQuery.data?.connected
-                ? `Tuya · ${connectionQuery.data.deviceCount ?? 0}`
-                : connectionQuery.isLoading
-                  ? 'Connecting'
-                  : 'Tuya offline'}
-            </Text>
-          </View>
           <Pressable
             onPress={leaveHome}
             accessibilityLabel="Sign out"
@@ -818,7 +468,7 @@ export default function HomeScreen() {
       </View>
 
       <View
-        accessibilityLabel={`Active home load ${activeWattageLabel}`}
+        accessibilityLabel="Live device power unavailable until direct pairing is built"
         testID="active-home-load"
         style={[
           styles.activeLoadCard,
@@ -839,22 +489,14 @@ export default function HomeScreen() {
         </View>
         <View style={styles.activeLoadInfo}>
           <Text style={[styles.activeLoadTitle, { color: colors.foreground }]}>
-            ESTIMATED ACTIVE POWER
+            LIVE DEVICE POWER
           </Text>
           <Text style={[styles.activeLoadMeta, { color: colors.mutedForeground }]}>
-            {activeLoad.unknownStatusCount > 0
-              ? `${activeLoad.activeControls} on · ${activeLoad.unknownStatusCount} status unknown`
-              : activeLoad.activeControls === 0
-                ? 'No devices currently on'
-                : `${activeLoad.activeControls} on${
-                    activeLoad.missingWattageCount > 0
-                      ? ` · ${activeLoad.missingWattageCount} need wattage`
-                      : ''
-                  }`}
+            Unavailable until direct pairing is built
           </Text>
         </View>
         <Text style={[styles.activeLoadValue, { color: colors.foreground }]}>
-          {activeWattageLabel}
+          — W
         </Text>
       </View>
 
@@ -989,7 +631,7 @@ export default function HomeScreen() {
                 </View>
                 <Pressable
                   onPress={openControlDialog}
-                  accessibilityLabel="Add control"
+                  accessibilityLabel="Add device tile"
                   testID="add-control-button"
                   style={({ pressed }) => [
                     styles.addControlButton,
@@ -1014,131 +656,13 @@ export default function HomeScreen() {
                 showsVerticalScrollIndicator={false}
               >
                 {roomControls.length > 0 ? (
-                  roomControls.map((control) => {
-                    if (control.tuyaDeviceId) {
-                      return (
-                        <LiveTuyaControlCard
-                          key={control.id}
-                          control={control}
-                          onOpenSettings={() =>
-                            openControlSettings(control.id)
-                          }
-                        />
-                      );
-                    }
-                    const definition = deviceKinds.find(
-                      (kind) => kind.key === control.kind,
-                    );
-                    const isOn = control.previewOn;
-                    return (
-                      <Pressable
-                        key={control.id}
-                        onPressIn={() => {
-                          longPressedControlIds.current.delete(control.id);
-                        }}
-                        onPress={() => {
-                          if (longPressedControlIds.current.has(control.id)) {
-                            longPressedControlIds.current.delete(control.id);
-                            return;
-                          }
-                          toggleControl(control.id);
-                        }}
-                        onLongPress={() => {
-                          longPressedControlIds.current.add(control.id);
-                          openControlSettings(control.id);
-                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                        }}
-                        onAccessibilityAction={(event) => {
-                          if (event.nativeEvent.actionName === 'longpress') {
-                            openControlSettings(control.id);
-                          }
-                        }}
-                        delayLongPress={500}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: isOn }}
-                        accessibilityLabel={`${control.name} preview switch`}
-                        accessibilityHint="Tap anywhere to toggle. Press and hold for device settings."
-                        accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
-                        testID={`toggle-control-${control.id}`}
-                        style={({ pressed }) => [
-                          styles.controlCard,
-                          {
-                            backgroundColor: colors.card,
-                            borderColor: colors.border,
-                          },
-                          pressed && styles.pressed,
-                        ]}
-                      >
-                        <View
-                          style={[
-                            styles.deviceIconWrap,
-                            {
-                              backgroundColor: isOn
-                                ? colors.accent + '55'
-                                : colors.secondary,
-                            },
-                          ]}
-                        >
-                          <MaterialCommunityIcons
-                            name={definition?.icon ?? 'lightbulb-outline'}
-                            size={21}
-                            color={isOn ? colors.accentForeground : colors.primary}
-                          />
-                        </View>
-                        <View style={styles.deviceInfo}>
-                          <Text
-                            numberOfLines={1}
-                            style={[styles.deviceName, { color: colors.foreground }]}
-                          >
-                            {control.name}
-                          </Text>
-                          <View style={styles.deviceMetaRow}>
-                            <View
-                              style={[
-                                styles.previewDot,
-                                {
-                                  backgroundColor: isOn
-                                    ? colors.accent
-                                    : colors.mutedForeground,
-                                },
-                              ]}
-                            />
-                            <Text
-                              style={[
-                                styles.deviceMeta,
-                                { color: colors.mutedForeground },
-                              ]}
-                            >
-                              Preview {isOn ? 'on' : 'off'}
-                            </Text>
-                          </View>
-                        </View>
-                        <View
-                          style={[
-                            styles.stateBadge,
-                            {
-                              backgroundColor: isOn
-                                ? colors.accent + '33'
-                                : colors.secondary,
-                            },
-                          ]}
-                        >
-                          <Text
-                            style={[
-                              styles.stateBadgeText,
-                              {
-                                color: isOn
-                                  ? colors.accentForeground
-                                  : colors.mutedForeground,
-                              },
-                            ]}
-                          >
-                            {isOn ? 'On' : 'Off'}
-                          </Text>
-                        </View>
-                      </Pressable>
-                    );
-                  })
+                  roomControls.map((control) => (
+                    <UnpairedControlCard
+                      key={control.id}
+                      control={control}
+                      onOpenSettings={() => openControlSettings(control.id)}
+                    />
+                  ))
                 ) : (
                   <View
                     style={[
@@ -1179,7 +703,7 @@ export default function HomeScreen() {
                         color={colors.primaryForeground}
                       />
                       <Text style={[styles.emptyActionText, { color: colors.primaryForeground }]}>
-                        Add a control
+                        Add a device tile
                       </Text>
                     </Pressable>
                   </View>
@@ -1252,12 +776,12 @@ export default function HomeScreen() {
             <View style={styles.sheetHeader}>
               <View>
                 <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
-                  {dialog === 'room' ? 'Add a room' : 'Add a control'}
+                  {dialog === 'room' ? 'Add a room' : 'Add a device tile'}
                 </Text>
                 <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
                   {dialog === 'room'
                     ? 'Give this part of your home a name.'
-                    : 'Pair devices in Smart Life first, then refresh this list.'}
+                    : 'Direct pairing is not available in this Replit build.'}
                 </Text>
               </View>
               <Pressable
@@ -1387,169 +911,24 @@ export default function HomeScreen() {
                       { color: colors.foreground },
                     ]}
                   >
-                    Linked Tuya devices
+                    Pairing status
                   </Text>
-                  {devicesQuery.isLoading ? (
-                    <View style={styles.devicePickerMessage}>
-                      <ActivityIndicator color={colors.primary} />
-                      <Text
-                        style={[
-                          styles.devicePickerMessageText,
-                          { color: colors.mutedForeground },
-                        ]}
-                      >
-                        Loading your devices…
-                      </Text>
-                    </View>
-                  ) : devicesQuery.isError ? (
-                    <View style={styles.devicePickerMessage}>
-                      <Text
-                        style={[
-                          styles.devicePickerMessageText,
-                          { color: colors.mutedForeground },
-                        ]}
-                      >
-                        Could not load devices. Check the Tuya connection and try again.
-                      </Text>
-                      <Pressable
-                        onPress={() => void devicesQuery.refetch()}
-                        style={{ paddingVertical: 8 }}
-                      >
-                        <Text
-                          style={[
-                            styles.devicePickerMessageText,
-                            { color: colors.primary, fontWeight: '700' },
-                          ]}
-                        >
-                          Try again
-                        </Text>
-                      </Pressable>
-                    </View>
-                  ) : availableDevices.length === 0 ? (
-                    <View style={styles.devicePickerMessage}>
-                      <Text
-                        style={[
-                          styles.devicePickerMessageText,
-                          { color: colors.mutedForeground },
-                        ]}
-                      >
-                        {(devicesQuery.data?.devices.length ?? 0) > 0
-                          ? 'All linked Tuya devices are already assigned to rooms.'
-                          : 'No devices found. Pair one in Smart Life, then refresh this list.'}
-                      </Text>
-                      {(devicesQuery.data?.devices.length ?? 0) === 0 && (
-                        <Pressable
-                          onPress={() => void devicesQuery.refetch()}
-                          testID="refresh-tuya-devices-button"
-                          style={{ paddingVertical: 8 }}
-                        >
-                          <Text
-                            style={[
-                              styles.devicePickerMessageText,
-                              { color: colors.primary, fontWeight: '700' },
-                            ]}
-                          >
-                            Refresh devices
-                          </Text>
-                        </Pressable>
-                      )}
-                    </View>
-                  ) : (
-                    <ScrollView
-                      style={styles.devicePickerList}
-                      contentContainerStyle={{ gap: 7 }}
-                      nestedScrollEnabled
-                      showsVerticalScrollIndicator
-                    >
-                      {availableDevices.map((device: TuyaDevice) => {
-                        const selected = device.id === selectedTuyaDeviceId;
-                        return (
-                          <Pressable
-                            key={device.id}
-                            onPress={() => {
-                              setSelectedTuyaDeviceId(device.id);
-                              setControlName(device.name);
-                              setLinkMessage(null);
-                            }}
-                            accessibilityRole="radio"
-                            accessibilityState={{ selected }}
-                            style={({ pressed }) => [
-                              styles.devicePickerItem,
-                              {
-                                backgroundColor: selected
-                                  ? colors.primary + '16'
-                                  : colors.background,
-                                borderColor: selected
-                                  ? colors.primary
-                                  : colors.border,
-                              },
-                              pressed && styles.pressed,
-                            ]}
-                          >
-                            <MaterialCommunityIcons
-                              name={selected ? 'radiobox-marked' : 'radiobox-blank'}
-                              size={18}
-                              color={selected ? colors.primary : colors.mutedForeground}
-                            />
-                            <View style={styles.devicePickerItemInfo}>
-                              <Text
-                                numberOfLines={1}
-                                style={[
-                                  styles.devicePickerItemName,
-                                  { color: colors.foreground },
-                                ]}
-                              >
-                                {device.name}
-                              </Text>
-                              <Text
-                                style={[
-                                  styles.devicePickerItemMeta,
-                                  { color: device.online ? colors.accentForeground : colors.mutedForeground },
-                                ]}
-                              >
-                                {device.online ? 'Online' : 'Offline'}
-                              </Text>
-                            </View>
-                          </Pressable>
-                        );
-                      })}
-                    </ScrollView>
-                  )}
-                  {selectedTuyaDevice && selectedDeviceControlsQuery.isLoading && (
-                    <View style={styles.devicePickerMessage}>
-                      <ActivityIndicator color={colors.primary} />
-                      <Text
-                        style={[
-                          styles.devicePickerMessageText,
-                          { color: colors.mutedForeground },
-                        ]}
-                      >
-                        Checking available controls…
-                      </Text>
-                    </View>
-                  )}
-                  {selectedTuyaDevice &&
-                    selectedDeviceControlsQuery.isSuccess &&
-                    !selectedSwitchFunction && (
-                      <Text
-                        style={[
-                          styles.devicePickerMessageText,
-                          { color: colors.destructive },
-                        ]}
-                      >
-                        This device does not report a supported on/off control.
-                      </Text>
-                    )}
-                  {linkMessage && (
+                  <View style={styles.devicePickerMessage}>
+                    <MaterialCommunityIcons
+                      name="bluetooth-connect"
+                      size={20}
+                      color={colors.primary}
+                    />
                     <Text
                       style={[
                         styles.devicePickerMessageText,
-                        { color: colors.destructive },
+                        { color: colors.mutedForeground },
                       ]}
                     >
-                      {linkMessage}
+                      Tuya device pairing and live control require the separate
+                      Xcode-based iPhone app. This build can save room tiles only.
                     </Text>
-                  )}
+                  </View>
                 </View>
                 <TextInput
                   value={controlName}
@@ -1570,35 +949,29 @@ export default function HomeScreen() {
                 />
                 <Pressable
                   onPress={addControl}
-                  disabled={
-                    !selectedTuyaDevice ||
-                    !selectedSwitchFunction ||
-                    selectedDeviceControlsQuery.isLoading
-                  }
+                  disabled={!controlName.trim()}
                   testID="save-control-button"
                   style={({ pressed }) => [
                     styles.submitButton,
                     {
-                      backgroundColor:
-                        selectedTuyaDevice && selectedSwitchFunction
-                          ? colors.primary
-                          : colors.secondary,
+                      backgroundColor: controlName.trim()
+                        ? colors.primary
+                        : colors.secondary,
                     },
-                    pressed && styles.pressed,
+                    pressed && controlName.trim() && styles.pressed,
                   ]}
                 >
                   <Text
                     style={[
                       styles.submitText,
                       {
-                        color:
-                          selectedTuyaDevice && selectedSwitchFunction
-                            ? colors.primaryForeground
-                            : colors.mutedForeground,
+                        color: controlName.trim()
+                          ? colors.primaryForeground
+                          : colors.mutedForeground,
                       },
                     ]}
                   >
-                    Link device to room
+                    Add unpaired tile
                   </Text>
                 </Pressable>
               </>
@@ -1679,7 +1052,7 @@ export default function HomeScreen() {
                       ?.label ?? 'Device'}
                   </Text>
                   <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    Tap the whole tile to toggle. Press and hold it to open these settings.
+                    Direct control is unavailable until the Tuya native pairing app is built.
                   </Text>
                 </View>
               </View>
@@ -1733,7 +1106,7 @@ export default function HomeScreen() {
                   </Pressable>
                 </View>
                 <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                  Used in estimated active power. Leave blank if unknown.
+                  Saved for future power estimates. Live device status is unavailable here.
                 </Text>
                 {wattageError && (
                   <Text style={[styles.deviceMeta, { color: colors.destructive }]}>
@@ -1750,7 +1123,7 @@ export default function HomeScreen() {
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${settingsControl?.name ?? 'device'} from this room`}
-                accessibilityHint="This removes the tile from this room only. The device remains paired in Smart Life."
+                accessibilityHint="This removes only the room tile. It does not affect a paired device."
                 testID="remove-control-from-settings-button"
                 style={({ pressed }) => [
                   styles.settingsRemoveButton,

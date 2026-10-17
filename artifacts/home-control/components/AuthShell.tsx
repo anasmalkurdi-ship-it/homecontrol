@@ -49,7 +49,7 @@ export function AuthShell({ title, subtitle, children }: AuthShellProps) {
           {children}
         </View>
         <Text style={[styles.footnote, { color: colors.mutedForeground }]}>
-          Your Tuya credentials stay on the secure server, not on this phone.
+          Direct pairing and device control require the separate native iPhone app.
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>
