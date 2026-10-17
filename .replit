@@ -18,3 +18,10 @@ expertMode = true
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[userenv]
+
+[userenv.shared]
+TUYA_UID = "bf4155094f3bad5097kw97"
+TUYA_REGION = "eu"
+HOME_CONTROL_OWNER_EMAIL = "anas.m.al.kurdi@gmail.com"
