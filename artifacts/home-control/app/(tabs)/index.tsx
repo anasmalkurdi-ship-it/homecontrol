@@ -2,13 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useClerk } from '@clerk/expo';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Keyboard,
   KeyboardAvoidingView,
-  Linking,
   Modal,
   Platform,
   Pressable,
@@ -190,40 +189,26 @@ function parseHomeData(raw: string | null): HomeData {
 
 function UnpairedControlCard({
   control,
-  onPress,
   onOpenSettings,
 }: {
   control: HomeControl;
-  onPress: () => void;
   onOpenSettings: () => void;
 }) {
   const colors = useColors();
-  const longPressTriggered = useRef(false);
   const definition = deviceKinds.find((kind) => kind.key === control.kind);
-  const hasShortcutPair = Boolean(
-    control.onShortcutName?.trim() && control.offShortcutName?.trim(),
-  );
-  const shortcutStatus = control.lastShortcutAction
-    ? `Last requested · ${control.lastShortcutAction.toUpperCase()}`
-    : 'First tap runs ON';
+  const lastRequestedOn = control.lastShortcutAction === 'on';
+  const hasLastRequest = control.lastShortcutAction !== undefined;
+  const orange = '#F28C28';
+  const lastRequestLabel = hasLastRequest
+    ? `Last requested · ${control.lastShortcutAction?.toUpperCase()}`
+    : 'Inactive until native Tuya control is built';
   const openSettings = () => {
-    longPressTriggered.current = true;
     onOpenSettings();
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
   return (
     <Pressable
-      onPressIn={() => {
-        longPressTriggered.current = false;
-      }}
-      onPress={() => {
-        if (longPressTriggered.current) {
-          longPressTriggered.current = false;
-          return;
-        }
-        onPress();
-      }}
       onLongPress={openSettings}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'longpress') openSettings();
@@ -231,22 +216,18 @@ function UnpairedControlCard({
       delayLongPress={500}
       accessibilityRole="button"
       accessibilityLabel={
-        hasShortcutPair
-          ? `${control.name}, ON and OFF Shortcuts assigned`
-          : `${control.name}, ON and OFF Shortcuts not configured`
+        hasLastRequest
+          ? `${control.name}, last requested ${control.lastShortcutAction}. Actual device state is unknown.`
+          : `${control.name}, inactive in this build`
       }
-      accessibilityHint={
-        hasShortcutPair
-          ? `Tap to run the ${control.lastShortcutAction === 'on' ? 'OFF' : 'ON'} Shortcut. Press and hold for settings.`
-          : 'Press and hold to assign both iPhone Shortcuts.'
-      }
+      accessibilityHint="The tile does not control the device now. Press and hold for device settings."
       accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
       testID={`control-tile-${control.id}`}
       style={({ pressed }) => [
         styles.controlCard,
         {
-          backgroundColor: colors.card,
-          borderColor: colors.border,
+          backgroundColor: lastRequestedOn ? `${orange}18` : colors.card,
+          borderColor: lastRequestedOn ? orange : colors.border,
         },
         pressed && styles.pressed,
       ]}
@@ -254,13 +235,15 @@ function UnpairedControlCard({
       <View
         style={[
           styles.deviceIconWrap,
-          { backgroundColor: colors.secondary },
+          {
+            backgroundColor: lastRequestedOn ? `${orange}35` : colors.secondary,
+          },
         ]}
       >
         <MaterialCommunityIcons
           name={definition?.icon ?? 'lightbulb-outline'}
           size={21}
-          color={colors.primary}
+          color={lastRequestedOn ? orange : colors.primary}
         />
       </View>
       <View style={styles.deviceInfo}>
@@ -274,27 +257,40 @@ function UnpairedControlCard({
           <View
             style={[
               styles.previewDot,
-              { backgroundColor: colors.mutedForeground },
+              {
+                backgroundColor: lastRequestedOn
+                  ? orange
+                  : colors.mutedForeground,
+              },
             ]}
           />
-          <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-            {hasShortcutPair ? shortcutStatus : 'Hold to assign ON and OFF'}
+          <Text
+            style={[
+              styles.deviceMeta,
+              { color: lastRequestedOn ? orange : colors.mutedForeground },
+            ]}
+          >
+            {lastRequestLabel}
           </Text>
         </View>
       </View>
       <View
         style={[
           styles.stateBadge,
-          { backgroundColor: colors.secondary },
+          {
+            backgroundColor: lastRequestedOn ? orange : colors.secondary,
+          },
         ]}
       >
         <Text
           style={[
             styles.stateBadgeText,
-            { color: colors.mutedForeground },
+            { color: lastRequestedOn ? '#2D2419' : colors.mutedForeground },
           ]}
         >
-          {hasShortcutPair ? 'Toggle' : 'Setup'}
+          hasLastRequest
+            ? `Last ${control.lastShortcutAction?.toUpperCase()}`
+            : 'Inactive'
         </Text>
       </View>
     </Pressable>
@@ -312,8 +308,6 @@ export default function HomeScreen() {
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
   const [wattageInput, setWattageInput] = useState('');
   const [wattageError, setWattageError] = useState<string | null>(null);
-  const [onShortcutInput, setOnShortcutInput] = useState('');
-  const [offShortcutInput, setOffShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
@@ -398,87 +392,8 @@ export default function HomeScreen() {
     setWattageInput(
       typeof control?.wattage === 'number' ? String(control.wattage) : '',
     );
-    setOnShortcutInput(control?.onShortcutName ?? control?.shortcutName ?? '');
-    setOffShortcutInput(control?.offShortcutName ?? '');
     setWattageError(null);
     setSettingsControlId(controlId);
-  };
-
-  const runControlShortcut = (control: HomeControl) => {
-    const onShortcutName = control.onShortcutName?.trim();
-    const offShortcutName = control.offShortcutName?.trim();
-    if (!onShortcutName || !offShortcutName) {
-      const missing = [
-        !onShortcutName ? 'ON' : null,
-        !offShortcutName ? 'OFF' : null,
-      ]
-        .filter(Boolean)
-        .join(' and ');
-      Alert.alert(
-        'Assign both Shortcuts',
-        `Add the exact names of both iPhone Shortcuts in device settings. The ${missing} Shortcut is missing.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Settings',
-            onPress: () => openControlSettings(control.id),
-          },
-        ],
-      );
-      return;
-    }
-
-    const action: ShortcutAction =
-      control.lastShortcutAction === 'on' ? 'off' : 'on';
-    const shortcutName = action === 'on' ? onShortcutName : offShortcutName;
-    if (Platform.OS !== 'ios') {
-      Alert.alert(
-        'iPhone only',
-        'This tile can run Apple Shortcuts on an iPhone.',
-      );
-      return;
-    }
-
-    const shortcutUrl = `shortcuts://run-shortcut?name=${encodeURIComponent(shortcutName)}`;
-    void Linking.openURL(shortcutUrl)
-      .then(() => {
-        setData((current) => ({
-          ...current,
-          controls: current.controls.map((item) =>
-            item.id === control.id
-              ? { ...item, lastShortcutAction: action }
-              : item,
-          ),
-        }));
-        void Haptics.selectionAsync();
-      })
-      .catch(() => {
-        Alert.alert(
-          'Shortcut not found',
-          `Make sure “${shortcutName}” exists in the Shortcuts app on this iPhone.`,
-        );
-      });
-  };
-
-  const saveControlShortcut = () => {
-    if (!settingsControl) return;
-    const onShortcutName = onShortcutInput.trim();
-    const offShortcutName = offShortcutInput.trim();
-    setData((current) => ({
-      ...current,
-      controls: current.controls.map((control) =>
-        control.id === settingsControl.id
-          ? {
-              ...control,
-              onShortcutName: onShortcutName || undefined,
-              offShortcutName: offShortcutName || undefined,
-              lastShortcutAction: undefined,
-            }
-          : control,
-      ),
-    }));
-    Keyboard.dismiss();
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const saveControlWattage = () => {
@@ -796,7 +711,6 @@ export default function HomeScreen() {
                     <UnpairedControlCard
                       key={control.id}
                       control={control}
-                      onPress={() => runControlShortcut(control)}
                       onOpenSettings={() => openControlSettings(control.id)}
                     />
                   ))
@@ -1189,72 +1103,16 @@ export default function HomeScreen() {
                       ?.label ?? 'Device'}
                   </Text>
                   <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    The tile alternates ON and OFF based on the last Shortcut it launched, not the device’s actual state.
+                    This tile is inactive in the current build.
                   </Text>
                 </View>
               </View>
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
-                  ON Shortcut
+                  Shortcut launching is disabled
                 </Text>
-                <TextInput
-                  value={onShortcutInput}
-                  onChangeText={setOnShortcutInput}
-                  maxLength={100}
-                  returnKeyType="done"
-                  onSubmitEditing={saveControlShortcut}
-                  placeholder="Exact ON Shortcut name"
-                  placeholderTextColor={colors.mutedForeground}
-                  accessibilityLabel="ON Shortcut name"
-                  testID="on-shortcut-name-input"
-                  style={[
-                    styles.textInput,
-                    {
-                      backgroundColor: colors.background,
-                      borderColor: colors.border,
-                      color: colors.foreground,
-                    },
-                  ]}
-                />
-                <Text style={[styles.deviceName, { color: colors.foreground }]}>
-                  OFF Shortcut
-                </Text>
-                <TextInput
-                  value={offShortcutInput}
-                  onChangeText={setOffShortcutInput}
-                  maxLength={100}
-                  returnKeyType="done"
-                  onSubmitEditing={saveControlShortcut}
-                  placeholder="Exact OFF Shortcut name"
-                  placeholderTextColor={colors.mutedForeground}
-                  accessibilityLabel="OFF Shortcut name"
-                  testID="off-shortcut-name-input"
-                  style={[
-                    styles.textInput,
-                    {
-                      backgroundColor: colors.background,
-                      borderColor: colors.border,
-                      color: colors.foreground,
-                    },
-                  ]}
-                />
-                <Pressable
-                  onPress={saveControlShortcut}
-                  accessibilityRole="button"
-                  accessibilityLabel="Save ON and OFF Shortcut names"
-                  testID="save-shortcut-names-button"
-                  style={({ pressed }) => [
-                    styles.submitButton,
-                    { backgroundColor: colors.primary },
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <Text style={[styles.submitText, { color: colors.primaryForeground }]}>
-                    Save Shortcuts
-                  </Text>
-                </Pressable>
                 <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                  First tap runs ON, then each tap alternates. Save both exact Shortcut names. Changes made outside Home Control can make this remembered state inaccurate.
+                  iOS opens the Shortcuts app when another app runs an existing Shortcut. These tiles stay inactive until native Tuya controls are built.
                 </Text>
               </View>
               <View style={styles.wattageField}>
