@@ -1,0 +1,367 @@
+I already have an existing React Native / Expo iOS smart-home application. DO NOT redesign or rebuild the existing UI.
+
+The current UI, rooms, device cards, database structure, navigation, and styling must remain intact.
+
+CURRENT SITUATION
+The app currently controls some Tuya / Smart Life devices using Apple Shortcuts / Smart Life Tap-to-Run.
+
+I want to REMOVE the dependency on:
+- Apple Shortcuts
+- Smart Life Tap-to-Run
+- shortcuts:// URLs
+- Opening the Smart Life app to execute commands
+- Tuya Cloud OpenAPI control from my Replit backend where possible
+
+I want to integrate Tuya's native SmartLife App SDK into my application so that my app becomes its own Tuya smart-home application.
+
+IMPORTANT:
+I understand this cannot run inside normal Expo Go because Tuya requires native iOS SDK integration.
+
+Convert/configure this project so it can use an Expo Development Build / native iOS project while keeping the existing React Native application.
+
+TARGET ARCHITECTURE
+
+React Native existing UI
+        ↓
+TuyaService abstraction
+        ↓
+Native React Native bridge/module
+        ↓
+Tuya SmartLife iOS SDK
+        ↓
+Tuya devices
+
+Do NOT put Tuya App Secret or other sensitive credentials directly in JavaScript source code.
+
+PHASE 1 — INSPECT FIRST
+
+Before modifying anything:
+
+1. Inspect the entire existing project.
+2. Determine:
+   - Expo SDK version
+   - React Native version
+   - whether Expo Router is used
+   - current device data model
+   - current room data model
+   - where Apple Shortcut control is implemented
+   - how device state is currently stored
+   - whether there is already a backend/API
+   - package.json dependencies
+   - existing iOS/native folders if present
+
+Do not remove working functionality until the replacement is ready.
+
+PHASE 2 — TUYA NATIVE SDK
+
+Prepare the iOS project for Tuya SmartLife App SDK.
+
+Use the CURRENT official Tuya SmartLife App SDK documentation and current supported iOS SDK packages. Do not invent SDK classes, method names, CocoaPods packages, APIs or credentials.
+
+If an API/class name cannot be verified, clearly mark it TODO instead of creating fake implementation.
+
+Set up the required iOS configuration including any required:
+
+- CocoaPods dependencies
+- AppDelegate initialization
+- URL schemes
+- permissions
+- Bluetooth permissions
+- Local Network permissions
+- Wi-Fi information permissions
+- Bonjour configuration if required
+- Tuya App Key
+- Tuya App Secret
+- bundle identifier configuration
+
+Create a native React Native module/bridge called:
+
+TuyaSmartHome
+
+Expose a clean TypeScript service to the React Native application.
+
+PHASE 3 — USER ACCOUNT
+
+Implement Tuya SDK user/account functionality.
+
+I need the application to be able to:
+
+- Register user
+- Login
+- Logout
+- Restore login/session
+- Get current Tuya user
+
+Keep authentication separated from the UI so I can redesign the login screen later.
+
+PHASE 4 — HOME MANAGEMENT
+
+Implement:
+
+createHome(name)
+getHomes()
+getHome(homeId)
+updateHome(...)
+deleteHome(...)
+
+The existing app's "Home control" concept should map cleanly to a Tuya Home.
+
+Do NOT destroy my existing room database.
+
+Create mappings between my local rooms and Tuya rooms/home where appropriate.
+
+PHASE 5 — DEVICE PAIRING
+
+The most important feature is DIRECT DEVICE PAIRING FROM MY APP.
+
+When I press the existing "+" Add button, add a new flow:
+
+Add Device
+   ↓
+Choose pairing method
+   ↓
+Wi-Fi / Bluetooth
+   ↓
+Pair device
+   ↓
+Register through Tuya SDK
+   ↓
+Retrieve Tuya device ID
+   ↓
+Save device in my existing application
+   ↓
+Assign it to selected room
+
+Support the Tuya SDK pairing methods that are currently officially supported, prioritizing:
+
+1. Wi-Fi EZ pairing
+2. Wi-Fi AP pairing
+3. Bluetooth/BLE pairing
+
+If the SDK supports automatic discovery, include:
+
+"Nearby devices"
+
+During Wi-Fi pairing ask for:
+
+Wi-Fi SSID
+Wi-Fi password
+
+Show pairing progress:
+
+Preparing
+Connecting
+Activating
+Adding device
+Success
+Failed
+
+Provide meaningful errors.
+
+I am willing to FACTORY RESET my existing Smart Life devices and pair them again directly into this application.
+
+PHASE 6 — DEVICE MODEL
+
+Extend the existing device model WITHOUT breaking existing records.
+
+Add fields similar to:
+
+tuyaDeviceId
+tuyaHomeId
+tuyaRoomId
+productId
+category
+online
+connectionType
+localKey (ONLY if legitimately required and securely stored)
+capabilities
+dps
+lastKnownState
+pairingStatus
+
+Do not assume every Tuya device has the same DPS.
+
+When a device is added, retrieve its supported functions/DPS and store/cache the relevant capability information.
+
+PHASE 7 — DEVICE CONTROL
+
+Create:
+
+getDevices(homeId)
+getDevice(deviceId)
+getDeviceStatus(deviceId)
+getDeviceFunctions(deviceId)
+
+and a generic command method:
+
+sendCommand(deviceId, commands)
+
+Then provide convenience methods such as:
+
+turnOn(deviceId)
+turnOff(deviceId)
+toggle(deviceId)
+
+The existing device cards should use this service.
+
+Example:
+
+Office mid
+[ ON / OFF ]
+
+When ON is pressed:
+
+Existing UI
+→ TuyaService.turnOn(deviceId)
+→ native Tuya bridge
+→ Tuya SDK
+→ device
+
+NO Apple Shortcut.
+NO Smart Life application opening.
+NO "Done" confirmation popup.
+
+PHASE 8 — REAL DEVICE STATE
+
+The UI currently has concepts such as:
+
+"Last requested · ON"
+"Last ON"
+
+Replace these with actual device state whenever the Tuya SDK provides it.
+
+Subscribe to Tuya device state/status updates.
+
+For example:
+
+Online · ON
+Online · OFF
+Offline
+Connecting...
+
+If I turn a light ON using the physical wall switch or another authorized Tuya interface and Tuya reports the change, update the card automatically.
+
+Do not simply assume a command succeeded.
+
+PHASE 9 — DEVICE CAPABILITIES
+
+Do not limit the architecture to switches.
+
+Design TuyaService so later we can support:
+
+Lights
+Dimmers
+RGB lights
+Smart plugs
+Curtains
+AC
+Thermostats
+Garage doors
+Sensors
+Power meters
+
+Read the device's supported Tuya functions/DPS and dynamically determine what controls are available.
+
+For power-monitoring devices, expose available measurements such as:
+
+Voltage
+Current
+Power
+Energy
+
+This will later feed the existing:
+
+LIVE DEVICE POWER
+— W
+
+section of my interface.
+
+PHASE 10 — MIGRATION
+
+Keep the existing Apple Shortcut integration temporarily as:
+
+controlMethod = "shortcut"
+
+New Tuya SDK devices should use:
+
+controlMethod = "tuya-sdk"
+
+This allows existing cards to continue working while I gradually factory-reset and re-pair approximately 100 devices.
+
+Once all devices have migrated, we can remove Shortcut support.
+
+PHASE 11 — SECURITY
+
+Never expose Tuya secrets in normal React Native JavaScript bundles if Tuya requires them to remain private.
+
+Follow Tuya's officially recommended iOS SDK credential/configuration mechanism.
+
+Never print:
+- App Secret
+- tokens
+- passwords
+- local keys
+
+to production logs.
+
+Wi-Fi passwords entered during pairing must never be permanently stored unless absolutely required.
+
+PHASE 12 — DEVELOPMENT BUILD
+
+Configure the project so I can build an iOS Development Build instead of Expo Go.
+
+Do NOT assume I have already configured Apple Developer signing.
+
+Give me exact instructions after implementation for:
+
+1. Tuya Developer Platform configuration
+2. Which Tuya SDK product/project I must create
+3. Where I obtain App Key / App Secret
+4. Required iOS Bundle ID
+5. Any Tuya configuration/download files required
+6. Apple Developer settings required
+7. Expo/EAS configuration required
+8. Building the development client
+9. Installing it on my iPhone
+10. Testing with ONE factory-reset Tuya device first
+
+IMPORTANT DEVELOPMENT RULES
+
+Do not redesign the existing interface.
+
+Do not replace the database.
+
+Do not delete my existing Shortcut implementation yet.
+
+Do not fabricate Tuya APIs.
+
+Do not use Tuya Cloud OpenAPI as a silent fallback.
+
+Do not make large unrelated changes.
+
+Create the integration in modular files so the existing application remains maintainable.
+
+Before making major changes, create a checkpoint/backup of the current working project.
+
+At the end, provide a report showing:
+
+COMPLETED:
+...
+
+NEEDS TUYA CREDENTIALS:
+...
+
+NEEDS APPLE DEVELOPER CONFIGURATION:
+...
+
+READY TO TEST:
+...
+
+NOT YET IMPLEMENTED:
+...
+
+The first milestone is simple:
+
+I want to factory-reset ONE Tuya Wi-Fi light, press "+" in my existing app, pair the light from my app, see it appear under "Anas office", and turn it ON/OFF directly from my app without opening Smart Life or Apple Shortcuts.
+
+Start by inspecting the current project and make the minimum changes necessary to reach that milestone.
