@@ -25,9 +25,17 @@ export function useGoogleAuth() {
     setLoading(true);
     setError(null);
     try {
+      const redirectOptions =
+        Platform.OS === 'web'
+          ? {}
+          : {
+              redirectUrl: AuthSession.makeRedirectUri({
+                scheme: 'home-control',
+              }),
+            };
       const { createdSessionId, setActive } = await startSSOFlow({
         strategy: 'oauth_google',
-        redirectUrl: AuthSession.makeRedirectUri({ scheme: 'home-control' }),
+        ...redirectOptions,
       });
       if (!createdSessionId) {
         setError('Complete any requested verification, then try again.');
@@ -37,8 +45,37 @@ export function useGoogleAuth() {
         session: createdSessionId,
         navigate: () => router.replace('/(tabs)'),
       });
-    } catch {
-      setError('Google sign-in is unavailable right now. Try email and password.');
+    } catch (error) {
+      const details =
+        error && typeof error === 'object'
+          ? (error as {
+              message?: string;
+              status?: number;
+              errors?: Array<{
+                code?: string;
+                longMessage?: string;
+                message?: string;
+              }>;
+            })
+          : {};
+      const firstError = details.errors?.[0];
+      const rawMessage =
+        firstError?.longMessage ?? firstError?.message ?? details.message;
+      const safeMessage =
+        typeof rawMessage === 'string'
+          ? rawMessage.replace(/https?:\/\/\S+/g, '[link]').slice(0, 180)
+          : undefined;
+
+      console.error('Google OAuth failed', {
+        code: firstError?.code,
+        status: details.status,
+        message: safeMessage,
+      });
+      setError(
+        __DEV__ && safeMessage
+          ? `Google sign-in failed: ${safeMessage}`
+          : 'Google sign-in is unavailable right now. Try email and password.',
+      );
     } finally {
       setLoading(false);
     }
