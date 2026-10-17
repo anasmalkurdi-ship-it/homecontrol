@@ -41,6 +41,8 @@ const colors = {
     // Accent highlights (badges, selected items, focus rings)
     accent: '#E9B952',
     accentForeground: '#2A3028',
+    deviceOn: '#F28C28',
+    deviceOnForeground: '#2D2419',
 
     // Destructive actions (delete, error states)
     destructive: '#B9563E',
@@ -66,6 +68,8 @@ const colors = {
     mutedForeground: '#A2AEA5',
     accent: '#DAB25D',
     accentForeground: '#21261F',
+    deviceOn: '#F28C28',
+    deviceOnForeground: '#2D2419',
     destructive: '#E18A72',
     destructiveForeground: '#241713',
     border: '#39453C',

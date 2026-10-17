@@ -2,12 +2,13 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useClerk } from '@clerk/expo';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -189,26 +190,45 @@ function parseHomeData(raw: string | null): HomeData {
 
 function UnpairedControlCard({
   control,
+  onPress,
   onOpenSettings,
 }: {
   control: HomeControl;
+  onPress: () => void;
   onOpenSettings: () => void;
 }) {
   const colors = useColors();
   const definition = deviceKinds.find((kind) => kind.key === control.kind);
+  const hasShortcutPair = Boolean(
+    control.onShortcutName?.trim() && control.offShortcutName?.trim(),
+  );
   const lastRequestedOn = control.lastShortcutAction === 'on';
   const hasLastRequest = control.lastShortcutAction !== undefined;
-  const orange = '#F28C28';
+  const orange = colors.deviceOn;
   const lastRequestLabel = hasLastRequest
     ? `Last requested · ${control.lastShortcutAction?.toUpperCase()}`
-    : 'Inactive until native Tuya control is built';
+    : hasShortcutPair
+      ? 'Ready · first tap runs ON'
+      : 'Set up ON/OFF Shortcuts';
+  const longPressTriggered = useRef(false);
   const openSettings = () => {
+    longPressTriggered.current = true;
     onOpenSettings();
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
   return (
     <Pressable
+      onPressIn={() => {
+        longPressTriggered.current = false;
+      }}
+      onPress={() => {
+        if (longPressTriggered.current) {
+          longPressTriggered.current = false;
+          return;
+        }
+        onPress();
+      }}
       onLongPress={openSettings}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'longpress') openSettings();
@@ -216,11 +236,15 @@ function UnpairedControlCard({
       delayLongPress={500}
       accessibilityRole="button"
       accessibilityLabel={
-        hasLastRequest
-          ? `${control.name}, last requested ${control.lastShortcutAction}. Actual device state is unknown.`
-          : `${control.name}, inactive in this build`
+        hasShortcutPair
+          ? `${control.name}, ON and OFF Shortcuts configured${hasLastRequest ? `, last requested ${control.lastShortcutAction}` : ''}. Actual device state is not verified.`
+          : `${control.name}, ON and OFF Shortcuts not configured`
       }
-      accessibilityHint="The tile does not control the device now. Press and hold for device settings."
+      accessibilityHint={
+        hasShortcutPair
+          ? `Tap to run the ${control.lastShortcutAction === 'on' ? 'OFF' : 'ON'} Shortcut. Press and hold for settings.`
+          : 'Tap to open setup instructions, or press and hold for settings.'
+      }
       accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
       testID={`control-tile-${control.id}`}
       style={({ pressed }) => [
@@ -285,12 +309,18 @@ function UnpairedControlCard({
         <Text
           style={[
             styles.stateBadgeText,
-            { color: lastRequestedOn ? '#2D2419' : colors.mutedForeground },
+            {
+              color: lastRequestedOn
+                ? colors.deviceOnForeground
+                : colors.mutedForeground,
+            },
           ]}
         >
-          hasLastRequest
+          {hasLastRequest
             ? `Last ${control.lastShortcutAction?.toUpperCase()}`
-            : 'Inactive'
+            : hasShortcutPair
+              ? 'Toggle'
+              : 'Setup'}
         </Text>
       </View>
     </Pressable>
@@ -418,6 +448,62 @@ export default function HomeScreen() {
     }));
     Keyboard.dismiss();
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const runControlShortcut = (control: HomeControl) => {
+    const onShortcutName = control.onShortcutName?.trim();
+    const offShortcutName = control.offShortcutName?.trim();
+    if (!onShortcutName || !offShortcutName) {
+      const missing = [
+        !onShortcutName ? 'ON' : null,
+        !offShortcutName ? 'OFF' : null,
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      Alert.alert(
+        'Assign both Shortcuts',
+        `Add the exact names of both iPhone Shortcuts in device settings. The ${missing} Shortcut is missing.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Settings',
+            onPress: () => openControlSettings(control.id),
+          },
+        ],
+      );
+      return;
+    }
+
+    if (Platform.OS !== 'ios') {
+      Alert.alert(
+        'iPhone only',
+        'This tile runs Apple Shortcuts on an iPhone.',
+      );
+      return;
+    }
+
+    const action: ShortcutAction =
+      control.lastShortcutAction === 'on' ? 'off' : 'on';
+    const shortcutName = action === 'on' ? onShortcutName : offShortcutName;
+    const shortcutUrl = `shortcuts://run-shortcut?name=${encodeURIComponent(shortcutName)}`;
+    void Linking.openURL(shortcutUrl)
+      .then(() => {
+        setData((current) => ({
+          ...current,
+          controls: current.controls.map((item) =>
+            item.id === control.id
+              ? { ...item, lastShortcutAction: action }
+              : item,
+          ),
+        }));
+        void Haptics.selectionAsync();
+      })
+      .catch(() => {
+        Alert.alert(
+          'Shortcut not found',
+          `Make sure “${shortcutName}” exists in the Shortcuts app on this iPhone.`,
+        );
+      });
   };
 
   const saveControlWattage = () => {
@@ -735,6 +821,7 @@ export default function HomeScreen() {
                     <UnpairedControlCard
                       key={control.id}
                       control={control}
+                      onPress={() => runControlShortcut(control)}
                       onOpenSettings={() => openControlSettings(control.id)}
                     />
                   ))
@@ -1127,7 +1214,7 @@ export default function HomeScreen() {
                       ?.label ?? 'Device'}
                   </Text>
                   <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    This tile is inactive in the current build.
+                    This tile runs its saved ON/OFF Shortcuts. iOS opens Shortcuts; the label shows the last requested action, not confirmed device state.
                   </Text>
                 </View>
               </View>
@@ -1192,7 +1279,7 @@ export default function HomeScreen() {
                   </Text>
                 </Pressable>
                 <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                  Saved locally only. Shortcut launching is disabled, so tiles remain inactive.
+                  Enter the exact names from the Shortcuts app. The tile runs ON first, then alternates using its last requested action.
                 </Text>
               </View>
               <View style={styles.wattageField}>
