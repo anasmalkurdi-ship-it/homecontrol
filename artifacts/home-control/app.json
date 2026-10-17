@@ -11,6 +11,7 @@
       "backgroundColor": "#F3F0E8"
     },
     "ios": {
+      "bundleIdentifier": "com.anashome.homecontrol",
       "supportsTablet": false
     },
     "android": {},
