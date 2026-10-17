@@ -1,10 +1,10 @@
 ---
 name: Tuya connection scope
-description: The user's preference for direct local device pairing instead of Tuya Cloud control.
+description: The user's chosen Smart Life pairing and Tuya Cloud control flow for Home Control.
 ---
 
-The user wants to pair and control devices directly from Home Control rather than through Tuya Cloud. Do not continue cloud account linkage unless the user re-approves it. Distinguish first-time Wi-Fi/Bluetooth onboarding from local control of devices already paired in Smart Life; verify official SDK and device support before choosing an approach. Treat a supplied APK as a reference, not as an executable library or source project.
+Pair devices in Smart Life, then have Home Control list and control them through the Tuya Cloud API. Do not pursue native Smart Life SDK or direct local pairing unless the user changes direction.
 
-**Why:** The user explicitly changed direction and asked to pair devices from this app without using the cloud.
+**Why:** The user explicitly chose to keep pairing in Smart Life and use the platform for Home Control.
 
-**How to apply:** Ask which direct-device flow they want, inspect any supplied APK for relevant metadata and supported workflows, and confirm device compatibility before implementing direct pairing.
+**How to apply:** Keep pairing outside Home Control; troubleshoot linked account, project region, API authorization, and per-device control permission for the Cloud API flow.

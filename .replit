@@ -22,6 +22,6 @@ timeoutMs = 20000
 [userenv]
 
 [userenv.shared]
-TUYA_UID = "bf4155094f3bad5097kw97"
+TUYA_UID = "eu1603294313169g7vfQ"
 TUYA_REGION = "eu"
 HOME_CONTROL_OWNER_EMAIL = "anas.m.al.kurdi@gmail.com"

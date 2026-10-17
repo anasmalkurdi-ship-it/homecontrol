@@ -1,1 +1,1 @@
-- [Tuya connection scope](tuya-connection-scope.md) — prioritize direct local pairing/control; do not rely on Tuya Cloud unless the user re-approves it.
+- [Tuya connection scope](tuya-connection-scope.md) — pair in Smart Life, then use Tuya Cloud for Home Control device access and commands.
