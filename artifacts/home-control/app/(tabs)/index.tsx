@@ -30,6 +30,7 @@ type DeviceKind =
   | 'heater'
   | 'nightLight'
   | 'airConditioner';
+type ShortcutAction = 'on' | 'off';
 
 type Room = {
   id: string;
@@ -42,6 +43,9 @@ type HomeControl = {
   name: string;
   kind: DeviceKind;
   wattage?: number;
+  onShortcutName?: string;
+  offShortcutName?: string;
+  lastShortcutAction?: ShortcutAction;
   shortcutName?: string;
 };
 
@@ -138,22 +142,42 @@ function parseHomeData(raw: string | null): HomeData {
             (typeof control.wattage === 'number' &&
               Number.isFinite(control.wattage) &&
               control.wattage >= 0)) &&
+          (control.onShortcutName === undefined ||
+            typeof control.onShortcutName === 'string') &&
+          (control.offShortcutName === undefined ||
+            typeof control.offShortcutName === 'string') &&
+          (control.lastShortcutAction === undefined ||
+            control.lastShortcutAction === 'on' ||
+            control.lastShortcutAction === 'off') &&
           (control.shortcutName === undefined ||
             typeof control.shortcutName === 'string'),
       )
-        .map((control) => ({
-          id: control.id,
-          roomId: control.roomId,
-          name: control.name,
-          kind: control.kind,
-          ...(typeof control.wattage === 'number'
-            ? { wattage: control.wattage }
-            : {}),
-          ...(typeof control.shortcutName === 'string' &&
-          control.shortcutName.trim()
-            ? { shortcutName: control.shortcutName.trim() }
-            : {}),
-        }))
+        .map((control) => {
+          const onShortcutName =
+            (typeof control.onShortcutName === 'string' &&
+              control.onShortcutName.trim()) ||
+            (typeof control.shortcutName === 'string' &&
+              control.shortcutName.trim()) ||
+            '';
+          const offShortcutName =
+            typeof control.offShortcutName === 'string'
+              ? control.offShortcutName.trim()
+              : '';
+          return {
+            id: control.id,
+            roomId: control.roomId,
+            name: control.name,
+            kind: control.kind,
+            ...(typeof control.wattage === 'number'
+              ? { wattage: control.wattage }
+              : {}),
+            ...(onShortcutName ? { onShortcutName } : {}),
+            ...(offShortcutName ? { offShortcutName } : {}),
+            ...(control.lastShortcutAction
+              ? { lastShortcutAction: control.lastShortcutAction }
+              : {}),
+          };
+        })
     : [];
 
   const activeRoomId =
@@ -176,6 +200,12 @@ function UnpairedControlCard({
   const colors = useColors();
   const longPressTriggered = useRef(false);
   const definition = deviceKinds.find((kind) => kind.key === control.kind);
+  const hasShortcutPair = Boolean(
+    control.onShortcutName?.trim() && control.offShortcutName?.trim(),
+  );
+  const shortcutStatus = control.lastShortcutAction
+    ? `Last requested · ${control.lastShortcutAction.toUpperCase()}`
+    : 'First tap runs ON';
   const openSettings = () => {
     longPressTriggered.current = true;
     onOpenSettings();
@@ -201,14 +231,14 @@ function UnpairedControlCard({
       delayLongPress={500}
       accessibilityRole="button"
       accessibilityLabel={
-        control.shortcutName
-          ? `${control.name}, runs Shortcut ${control.shortcutName}`
-          : `${control.name}, no Shortcut assigned`
+        hasShortcutPair
+          ? `${control.name}, ON and OFF Shortcuts assigned`
+          : `${control.name}, ON and OFF Shortcuts not configured`
       }
       accessibilityHint={
-        control.shortcutName
-          ? 'Tap to run the assigned iPhone Shortcut. Press and hold for settings.'
-          : 'Press and hold to assign an iPhone Shortcut.'
+        hasShortcutPair
+          ? `Tap to run the ${control.lastShortcutAction === 'on' ? 'OFF' : 'ON'} Shortcut. Press and hold for settings.`
+          : 'Press and hold to assign both iPhone Shortcuts.'
       }
       accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
       testID={`control-tile-${control.id}`}
@@ -248,9 +278,7 @@ function UnpairedControlCard({
             ]}
           />
           <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-            {control.shortcutName
-              ? `Shortcut · ${control.shortcutName}`
-              : 'Hold to assign a Shortcut'}
+            {hasShortcutPair ? shortcutStatus : 'Hold to assign ON and OFF'}
           </Text>
         </View>
       </View>
@@ -266,7 +294,7 @@ function UnpairedControlCard({
             { color: colors.mutedForeground },
           ]}
         >
-          {control.shortcutName ? 'Shortcut' : 'Setup'}
+          {hasShortcutPair ? 'Toggle' : 'Setup'}
         </Text>
       </View>
     </Pressable>
@@ -284,7 +312,8 @@ export default function HomeScreen() {
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
   const [wattageInput, setWattageInput] = useState('');
   const [wattageError, setWattageError] = useState<string | null>(null);
-  const [shortcutInput, setShortcutInput] = useState('');
+  const [onShortcutInput, setOnShortcutInput] = useState('');
+  const [offShortcutInput, setOffShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
@@ -369,17 +398,25 @@ export default function HomeScreen() {
     setWattageInput(
       typeof control?.wattage === 'number' ? String(control.wattage) : '',
     );
-    setShortcutInput(control?.shortcutName ?? '');
+    setOnShortcutInput(control?.onShortcutName ?? control?.shortcutName ?? '');
+    setOffShortcutInput(control?.offShortcutName ?? '');
     setWattageError(null);
     setSettingsControlId(controlId);
   };
 
   const runControlShortcut = (control: HomeControl) => {
-    const shortcutName = control.shortcutName?.trim();
-    if (!shortcutName) {
+    const onShortcutName = control.onShortcutName?.trim();
+    const offShortcutName = control.offShortcutName?.trim();
+    if (!onShortcutName || !offShortcutName) {
+      const missing = [
+        !onShortcutName ? 'ON' : null,
+        !offShortcutName ? 'OFF' : null,
+      ]
+        .filter(Boolean)
+        .join(' and ');
       Alert.alert(
-        'No Shortcut assigned',
-        'Add the exact name of an existing iPhone Shortcut in device settings.',
+        'Assign both Shortcuts',
+        `Add the exact names of both iPhone Shortcuts in device settings. The ${missing} Shortcut is missing.`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -390,6 +427,10 @@ export default function HomeScreen() {
       );
       return;
     }
+
+    const action: ShortcutAction =
+      control.lastShortcutAction === 'on' ? 'off' : 'on';
+    const shortcutName = action === 'on' ? onShortcutName : offShortcutName;
     if (Platform.OS !== 'ios') {
       Alert.alert(
         'iPhone only',
@@ -399,24 +440,39 @@ export default function HomeScreen() {
     }
 
     const shortcutUrl = `shortcuts://run-shortcut?name=${encodeURIComponent(shortcutName)}`;
-    void Linking.openURL(shortcutUrl).catch(() => {
-      Alert.alert(
-        'Shortcut not found',
-        `Make sure “${shortcutName}” exists in the Shortcuts app on this iPhone.`,
-      );
-    });
+    void Linking.openURL(shortcutUrl)
+      .then(() => {
+        setData((current) => ({
+          ...current,
+          controls: current.controls.map((item) =>
+            item.id === control.id
+              ? { ...item, lastShortcutAction: action }
+              : item,
+          ),
+        }));
+        void Haptics.selectionAsync();
+      })
+      .catch(() => {
+        Alert.alert(
+          'Shortcut not found',
+          `Make sure “${shortcutName}” exists in the Shortcuts app on this iPhone.`,
+        );
+      });
   };
 
   const saveControlShortcut = () => {
     if (!settingsControl) return;
-    const shortcutName = shortcutInput.trim();
+    const onShortcutName = onShortcutInput.trim();
+    const offShortcutName = offShortcutInput.trim();
     setData((current) => ({
       ...current,
       controls: current.controls.map((control) =>
         control.id === settingsControl.id
           ? {
               ...control,
-              shortcutName: shortcutName || undefined,
+              onShortcutName: onShortcutName || undefined,
+              offShortcutName: offShortcutName || undefined,
+              lastShortcutAction: undefined,
             }
           : control,
       ),
@@ -1133,55 +1189,72 @@ export default function HomeScreen() {
                       ?.label ?? 'Device'}
                   </Text>
                   <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    Tap this tile to run its assigned iPhone Shortcut.
+                    The tile alternates ON and OFF based on the last Shortcut it launched, not the device’s actual state.
                   </Text>
                 </View>
               </View>
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
-                  iPhone Shortcut
+                  ON Shortcut
                 </Text>
-                <View style={styles.wattageInputRow}>
-                  <TextInput
-                    value={shortcutInput}
-                    onChangeText={setShortcutInput}
-                    maxLength={100}
-                    returnKeyType="done"
-                    onSubmitEditing={saveControlShortcut}
-                    placeholder="Exact Shortcut name"
-                    placeholderTextColor={colors.mutedForeground}
-                    accessibilityLabel="iPhone Shortcut name"
-                    testID="shortcut-name-input"
-                    style={[
-                      styles.textInput,
-                      styles.wattageInput,
-                      {
-                        backgroundColor: colors.background,
-                        borderColor: colors.border,
-                        color: colors.foreground,
-                      },
-                    ]}
-                  />
-                  <Pressable
-                    onPress={saveControlShortcut}
-                    accessibilityRole="button"
-                    accessibilityLabel="Save Shortcut name"
-                    testID="save-shortcut-name-button"
-                    style={({ pressed }) => [
-                      styles.wattageSaveButton,
-                      { backgroundColor: colors.primary },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name="check"
-                      size={20}
-                      color={colors.primaryForeground}
-                    />
-                  </Pressable>
-                </View>
+                <TextInput
+                  value={onShortcutInput}
+                  onChangeText={setOnShortcutInput}
+                  maxLength={100}
+                  returnKeyType="done"
+                  onSubmitEditing={saveControlShortcut}
+                  placeholder="Exact ON Shortcut name"
+                  placeholderTextColor={colors.mutedForeground}
+                  accessibilityLabel="ON Shortcut name"
+                  testID="on-shortcut-name-input"
+                  style={[
+                    styles.textInput,
+                    {
+                      backgroundColor: colors.background,
+                      borderColor: colors.border,
+                      color: colors.foreground,
+                    },
+                  ]}
+                />
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  OFF Shortcut
+                </Text>
+                <TextInput
+                  value={offShortcutInput}
+                  onChangeText={setOffShortcutInput}
+                  maxLength={100}
+                  returnKeyType="done"
+                  onSubmitEditing={saveControlShortcut}
+                  placeholder="Exact OFF Shortcut name"
+                  placeholderTextColor={colors.mutedForeground}
+                  accessibilityLabel="OFF Shortcut name"
+                  testID="off-shortcut-name-input"
+                  style={[
+                    styles.textInput,
+                    {
+                      backgroundColor: colors.background,
+                      borderColor: colors.border,
+                      color: colors.foreground,
+                    },
+                  ]}
+                />
+                <Pressable
+                  onPress={saveControlShortcut}
+                  accessibilityRole="button"
+                  accessibilityLabel="Save ON and OFF Shortcut names"
+                  testID="save-shortcut-names-button"
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    { backgroundColor: colors.primary },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.submitText, { color: colors.primaryForeground }]}>
+                    Save Shortcuts
+                  </Text>
+                </Pressable>
                 <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                  Enter the exact name of a Shortcut on this iPhone. Leave blank and save to unlink it.
+                  First tap runs ON, then each tap alternates. Save both exact Shortcut names. Changes made outside Home Control can make this remembered state inaccurate.
                 </Text>
               </View>
               <View style={styles.wattageField}>
