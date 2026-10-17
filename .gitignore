@@ -47,3 +47,5 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+/artifacts/home-control/private/
+/attached_assets/iOS_SDK_1792237595955.zip

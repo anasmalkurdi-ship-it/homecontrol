@@ -49,7 +49,7 @@ export function AuthShell({ title, subtitle, children }: AuthShellProps) {
           {children}
         </View>
         <Text style={[styles.footnote, { color: colors.mutedForeground }]}>
-          Direct pairing and device control require the separate native iPhone app.
+          Pair and control Tuya devices from Home Control on your iPhone.
         </Text>
       </ScrollView>
     </KeyboardAvoidingView>

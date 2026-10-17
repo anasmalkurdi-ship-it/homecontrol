@@ -23,6 +23,13 @@ import {
 } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import { TuyaPairingFlow } from '@/components/TuyaPairingFlow';
+import {
+  TuyaSmartHome,
+  type TuyaDeviceSnapshot,
+  type TuyaHome,
+  type TuyaSchema,
+} from '@/services/tuyaSmartHome';
 
 type DeviceKind =
   | 'chandelier'
@@ -31,6 +38,7 @@ type DeviceKind =
   | 'nightLight'
   | 'airConditioner';
 type ShortcutAction = 'on' | 'off';
+type ControlMethod = 'shortcut' | 'tuya-sdk';
 
 type Room = {
   id: string;
@@ -47,6 +55,12 @@ type HomeControl = {
   offShortcutName?: string;
   lastShortcutAction?: ShortcutAction;
   shortcutName?: string;
+  controlMethod?: ControlMethod;
+  tuyaDeviceId?: string;
+  tuyaHomeId?: string;
+  tuyaDps?: Record<string, unknown>;
+  tuyaSchema?: TuyaSchema[];
+  tuyaOnline?: boolean;
 };
 
 type HomeData = {
@@ -150,7 +164,30 @@ function parseHomeData(raw: string | null): HomeData {
             control.lastShortcutAction === 'on' ||
             control.lastShortcutAction === 'off') &&
           (control.shortcutName === undefined ||
-            typeof control.shortcutName === 'string'),
+            typeof control.shortcutName === 'string') &&
+          (control.controlMethod === undefined ||
+            control.controlMethod === 'shortcut' ||
+            control.controlMethod === 'tuya-sdk') &&
+          (control.tuyaDeviceId === undefined ||
+            typeof control.tuyaDeviceId === 'string') &&
+          (control.tuyaHomeId === undefined ||
+            typeof control.tuyaHomeId === 'string') &&
+          (control.tuyaDps === undefined ||
+            (!!control.tuyaDps &&
+              typeof control.tuyaDps === 'object' &&
+              !Array.isArray(control.tuyaDps))) &&
+          (control.tuyaSchema === undefined ||
+            (Array.isArray(control.tuyaSchema) &&
+              control.tuyaSchema.every(
+                (schema) =>
+                  !!schema &&
+                  typeof schema.dpId === 'string' &&
+                  typeof schema.code === 'string' &&
+                  typeof schema.name === 'string' &&
+                  typeof schema.mode === 'string',
+              ))) &&
+          (control.tuyaOnline === undefined ||
+            typeof control.tuyaOnline === 'boolean'),
       )
         .map((control) => {
           const onShortcutName =
@@ -176,6 +213,26 @@ function parseHomeData(raw: string | null): HomeData {
             ...(control.lastShortcutAction
               ? { lastShortcutAction: control.lastShortcutAction }
               : {}),
+            ...(control.controlMethod
+              ? { controlMethod: control.controlMethod }
+              : {}),
+            ...(typeof control.tuyaDeviceId === 'string'
+              ? { tuyaDeviceId: control.tuyaDeviceId }
+              : {}),
+            ...(typeof control.tuyaHomeId === 'string'
+              ? { tuyaHomeId: control.tuyaHomeId }
+              : {}),
+            ...(control.tuyaDps &&
+            typeof control.tuyaDps === 'object' &&
+            !Array.isArray(control.tuyaDps)
+              ? { tuyaDps: control.tuyaDps }
+              : {}),
+            ...(Array.isArray(control.tuyaSchema)
+              ? { tuyaSchema: control.tuyaSchema }
+              : {}),
+            ...(typeof control.tuyaOnline === 'boolean'
+              ? { tuyaOnline: control.tuyaOnline }
+              : {}),
           };
         })
     : [];
@@ -186,6 +243,32 @@ function parseHomeData(raw: string | null): HomeData {
       : (rooms[0]?.id ?? null);
 
   return { rooms, controls, activeRoomId };
+}
+
+function getTuyaSwitchDpId(control: HomeControl): string | null {
+  const dps = control.tuyaDps ?? {};
+  const booleanSchema = (control.tuyaSchema ?? []).filter(
+    (item) =>
+      typeof dps[item.dpId] === 'boolean' &&
+      item.mode.toLowerCase() !== 'ro',
+  );
+  const preferred = booleanSchema.find((item) =>
+    /switch|power|on_off|light/i.test(`${item.code} ${item.name}`),
+  );
+  if (preferred) return preferred.dpId;
+
+  const schemaFallback = booleanSchema[0];
+  if (schemaFallback) return schemaFallback.dpId;
+
+  const dpsFallback = Object.entries(dps).find(([, value]) => typeof value === 'boolean');
+  return dpsFallback?.[0] ?? null;
+}
+
+function getTuyaPowerState(control: HomeControl): boolean | undefined {
+  const dpId = getTuyaSwitchDpId(control);
+  if (!dpId) return undefined;
+  const value = control.tuyaDps?.[dpId];
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 function UnpairedControlCard({
@@ -202,14 +285,26 @@ function UnpairedControlCard({
   const hasShortcutPair = Boolean(
     control.onShortcutName?.trim() && control.offShortcutName?.trim(),
   );
-  const lastRequestedOn = control.lastShortcutAction === 'on';
+  const isTuyaDevice = control.controlMethod === 'tuya-sdk';
+  const tuyaReportedOn = isTuyaDevice
+    ? getTuyaPowerState(control)
+    : undefined;
+  const lastRequestedOn = isTuyaDevice
+    ? tuyaReportedOn === true
+    : control.lastShortcutAction === 'on';
   const hasLastRequest = control.lastShortcutAction !== undefined;
   const orange = colors.deviceOn;
-  const lastRequestLabel = hasLastRequest
-    ? `Last requested · ${control.lastShortcutAction?.toUpperCase()}`
-    : hasShortcutPair
-      ? 'Ready · first tap runs ON'
-      : 'Set up ON/OFF Shortcuts';
+  const stateLabel = isTuyaDevice
+    ? control.tuyaOnline === false
+      ? 'Device offline'
+      : tuyaReportedOn === undefined
+        ? 'Waiting for device state'
+        : `Device state · ${tuyaReportedOn ? 'ON' : 'OFF'}`
+    : hasLastRequest
+      ? `Last requested · ${control.lastShortcutAction?.toUpperCase()}`
+      : hasShortcutPair
+        ? 'Ready · first tap runs ON'
+        : 'Set up ON/OFF Shortcuts';
   const longPressTriggered = useRef(false);
   const openSettings = () => {
     longPressTriggered.current = true;
@@ -236,14 +331,18 @@ function UnpairedControlCard({
       delayLongPress={500}
       accessibilityRole="button"
       accessibilityLabel={
-        hasShortcutPair
-          ? `${control.name}, ON and OFF Shortcuts configured${hasLastRequest ? `, last requested ${control.lastShortcutAction}` : ''}. Actual device state is not verified.`
-          : `${control.name}, ON and OFF Shortcuts not configured`
+        isTuyaDevice
+          ? `${control.name}, Tuya device ${tuyaReportedOn === undefined ? 'state unknown' : tuyaReportedOn ? 'on' : 'off'}${control.tuyaOnline === false ? ', offline' : ''}`
+          : hasShortcutPair
+            ? `${control.name}, ON and OFF Shortcuts configured${hasLastRequest ? `, last requested ${control.lastShortcutAction}` : ''}. Actual device state is not verified.`
+            : `${control.name}, ON and OFF Shortcuts not configured`
       }
       accessibilityHint={
-        hasShortcutPair
-          ? `Tap to run the ${control.lastShortcutAction === 'on' ? 'OFF' : 'ON'} Shortcut. Press and hold for settings.`
-          : 'Tap to open setup instructions, or press and hold for settings.'
+        isTuyaDevice
+          ? 'Tap to toggle the device. Press and hold for settings.'
+          : hasShortcutPair
+            ? `Tap to run the ${control.lastShortcutAction === 'on' ? 'OFF' : 'ON'} Shortcut. Press and hold for settings.`
+            : 'Tap to open setup instructions, or press and hold for settings.'
       }
       accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
       testID={`control-tile-${control.id}`}
@@ -294,7 +393,7 @@ function UnpairedControlCard({
               { color: lastRequestedOn ? orange : colors.mutedForeground },
             ]}
           >
-            {lastRequestLabel}
+            {stateLabel}
           </Text>
         </View>
       </View>
@@ -316,11 +415,17 @@ function UnpairedControlCard({
             },
           ]}
         >
-          {hasLastRequest
-            ? `Last ${control.lastShortcutAction?.toUpperCase()}`
-            : hasShortcutPair
-              ? 'Toggle'
-              : 'Setup'}
+          {isTuyaDevice
+            ? tuyaReportedOn === undefined
+              ? '—'
+              : tuyaReportedOn
+                ? 'ON'
+                : 'OFF'
+            : hasLastRequest
+              ? `Last ${control.lastShortcutAction?.toUpperCase()}`
+              : hasShortcutPair
+                ? 'Toggle'
+                : 'Setup'}
         </Text>
       </View>
     </Pressable>
@@ -343,6 +448,38 @@ export default function HomeScreen() {
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
+  const [tuyaPairingVisible, setTuyaPairingVisible] = useState(false);
+
+  const tuyaControlSignature = useMemo(
+    () =>
+      data.controls
+        .filter(
+          (control) =>
+            control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
+        )
+        .map((control) => `${control.id}:${control.tuyaDeviceId}`)
+        .join('|'),
+    [data.controls],
+  );
+
+  const applyTuyaSnapshot = (snapshot: TuyaDeviceSnapshot) => {
+    if (!snapshot.deviceId) return;
+    setData((current) => ({
+      ...current,
+      controls: current.controls.map((control) =>
+        control.controlMethod === 'tuya-sdk' &&
+        control.tuyaDeviceId === snapshot.deviceId
+          ? {
+              ...control,
+              name: snapshot.name || control.name,
+              tuyaDps: snapshot.dps,
+              tuyaSchema: snapshot.schema,
+              tuyaOnline: snapshot.isOnline,
+            }
+          : control,
+      ),
+    }));
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -367,6 +504,45 @@ export default function HomeScreen() {
       setStorageError(true);
     });
   }, [data, ready]);
+
+  useEffect(() => {
+    if (
+      !ready ||
+      Platform.OS !== 'ios' ||
+      !TuyaSmartHome.isNativeAvailable() ||
+      !tuyaControlSignature
+    ) {
+      return;
+    }
+
+    let mounted = true;
+    const tuyaControls = data.controls.filter(
+      (control) =>
+        control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
+    );
+    const deviceUpdates = TuyaSmartHome.addListener(
+      'onDeviceUpdate',
+      (snapshot) => {
+        if (mounted) applyTuyaSnapshot(snapshot);
+      },
+    );
+
+    for (const control of tuyaControls) {
+      if (!control.tuyaDeviceId) continue;
+      void TuyaSmartHome.observeDevice(control.tuyaDeviceId)
+        .then((snapshot) => {
+          if (mounted) applyTuyaSnapshot(snapshot);
+        })
+        .catch(() => undefined);
+    }
+
+    return () => {
+      mounted = false;
+      deviceUpdates?.remove();
+    };
+    // The stable signature avoids re-subscribing when only device state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, tuyaControlSignature]);
 
   const activeRoom = useMemo(
     () => data.rooms.find((room) => room.id === data.activeRoomId) ?? null,
@@ -419,6 +595,38 @@ export default function HomeScreen() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
+  const addTuyaControl = (device: TuyaDeviceSnapshot, home: TuyaHome) => {
+    if (!activeRoom) return;
+    const control: HomeControl = {
+      id: createId(),
+      roomId: activeRoom.id,
+      name:
+        controlName.trim() ||
+        device.name ||
+        deviceKinds.find((kind) => kind.key === selectedKind)?.defaultName ||
+        'Device',
+      kind: selectedKind,
+      controlMethod: 'tuya-sdk',
+      tuyaDeviceId: device.deviceId,
+      tuyaHomeId: home.homeId,
+      tuyaDps: device.dps,
+      tuyaSchema: device.schema,
+      tuyaOnline: device.isOnline,
+    };
+    setData((current) => ({
+      ...current,
+      controls: [...current.controls, control],
+    }));
+    setTuyaPairingVisible(false);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const openTuyaPairing = () => {
+    if (!activeRoom) return;
+    setDialog(null);
+    setTuyaPairingVisible(true);
+  };
+
   const openControlSettings = (controlId: string) => {
     const control = data.controls.find((item) => item.id === controlId);
     setWattageInput(
@@ -451,6 +659,65 @@ export default function HomeScreen() {
   };
 
   const runControlShortcut = (control: HomeControl) => {
+    if (control.controlMethod === 'tuya-sdk') {
+      if (!control.tuyaDeviceId) {
+        Alert.alert('Device link missing', 'Open device settings and pair this tile again.');
+        return;
+      }
+      if (control.tuyaOnline === false) {
+        Alert.alert('Device offline', 'The Tuya device is currently offline.');
+        return;
+      }
+
+      void (async () => {
+        try {
+          let currentControl = control;
+          let dpId = getTuyaSwitchDpId(currentControl);
+          let currentValue =
+            dpId && typeof currentControl.tuyaDps?.[dpId] === 'boolean'
+              ? currentControl.tuyaDps[dpId]
+              : undefined;
+
+          if (typeof currentValue !== 'boolean') {
+            const snapshot = await TuyaSmartHome.observeDevice(control.tuyaDeviceId!);
+            applyTuyaSnapshot(snapshot);
+            currentControl = {
+              ...currentControl,
+              tuyaDps: snapshot.dps,
+              tuyaSchema: snapshot.schema,
+              tuyaOnline: snapshot.isOnline,
+            };
+            dpId = getTuyaSwitchDpId(currentControl);
+            currentValue =
+              dpId && typeof currentControl.tuyaDps?.[dpId] === 'boolean'
+                ? currentControl.tuyaDps[dpId]
+                : undefined;
+          }
+
+          if (!dpId || typeof currentValue !== 'boolean') {
+            Alert.alert(
+              'No on/off control found',
+              'Tuya did not report a writable on/off switch for this device.',
+            );
+            return;
+          }
+
+          await TuyaSmartHome.publishDps(control.tuyaDeviceId!, {
+            [dpId]: !currentValue,
+          });
+          void Haptics.selectionAsync();
+        } catch (controlError) {
+          Alert.alert(
+            'Tuya command failed',
+            controlError instanceof Error
+              ? controlError.message
+              : 'The device did not accept the command.',
+          );
+        }
+      })();
+      return;
+    }
+
     const onShortcutName = control.onShortcutName?.trim();
     const offShortcutName = control.offShortcutName?.trim();
     if (!onShortcutName || !offShortcutName) {
@@ -566,6 +833,18 @@ export default function HomeScreen() {
   const selectedDefinition = deviceKinds.find(
     (kind) => kind.key === selectedKind,
   );
+  const activeControls = data.controls.filter((control) =>
+    control.controlMethod === 'tuya-sdk'
+      ? getTuyaPowerState(control) === true
+      : control.lastShortcutAction === 'on',
+  );
+  const activeRatedWattage = activeControls.reduce(
+    (total, control) => total + (control.wattage ?? 0),
+    0,
+  );
+  const activeControlsMissingWattage = activeControls.filter(
+    (control) => control.wattage === undefined,
+  ).length;
   if (!ready) {
     return (
       <View style={[styles.loading, { backgroundColor: colors.background }]}>
@@ -629,7 +908,7 @@ export default function HomeScreen() {
       </View>
 
       <View
-        accessibilityLabel="Live device power unavailable until direct pairing is built"
+        accessibilityLabel={`Active rated power ${activeRatedWattage} watts`}
         testID="active-home-load"
         style={[
           styles.activeLoadCard,
@@ -650,14 +929,21 @@ export default function HomeScreen() {
         </View>
         <View style={styles.activeLoadInfo}>
           <Text style={[styles.activeLoadTitle, { color: colors.foreground }]}>
-            LIVE DEVICE POWER
+            ACTIVE RATED LOAD
           </Text>
           <Text style={[styles.activeLoadMeta, { color: colors.mutedForeground }]}>
-            Unavailable until direct pairing is built
+            {activeControls.length === 0
+              ? 'No active devices reported'
+              : activeControlsMissingWattage > 0
+                ? `${activeControls.length} active · ${activeControlsMissingWattage} need wattage`
+                : `${activeControls.length} active device${activeControls.length === 1 ? '' : 's'}`}
           </Text>
         </View>
         <Text style={[styles.activeLoadValue, { color: colors.foreground }]}>
-          — W
+          {Number.isInteger(activeRatedWattage)
+            ? activeRatedWattage
+            : activeRatedWattage.toFixed(1)}{' '}
+          W
         </Text>
       </View>
 
@@ -943,7 +1229,7 @@ export default function HomeScreen() {
                 <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
                   {dialog === 'room'
                     ? 'Give this part of your home a name.'
-                    : 'Direct pairing is not available in this Replit build.'}
+                    : 'Add a Shortcut tile or pair a Tuya device to this room.'}
                 </Text>
               </View>
               <Pressable
@@ -1087,8 +1373,8 @@ export default function HomeScreen() {
                         { color: colors.mutedForeground },
                       ]}
                     >
-                      Tuya device pairing and live control require the separate
-                      Xcode-based iPhone app. This build can save room tiles only.
+                      Pair a device already reset for Wi-Fi setup using the same
+                      Smart Life account. Existing Shortcut tiles keep working.
                     </Text>
                   </View>
                 </View>
@@ -1133,7 +1419,26 @@ export default function HomeScreen() {
                       },
                     ]}
                   >
-                    Add unpaired tile
+                    Add Shortcut tile
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={openTuyaPairing}
+                  accessibilityRole="button"
+                  testID="pair-tuya-device-button"
+                  style={({ pressed }) => [
+                    styles.pairTuyaButton,
+                    { borderColor: colors.primary },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="access-point-network"
+                    size={18}
+                    color={colors.primary}
+                  />
+                  <Text style={[styles.pairTuyaButtonText, { color: colors.primary }]}>
+                    Pair a Tuya device
                   </Text>
                 </Pressable>
               </>
@@ -1214,10 +1519,37 @@ export default function HomeScreen() {
                       ?.label ?? 'Device'}
                   </Text>
                   <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    This tile runs its saved ON/OFF Shortcuts. iOS opens Shortcuts; the label shows the last requested action, not confirmed device state.
+                    {settingsControl?.controlMethod === 'tuya-sdk'
+                      ? `Linked through Tuya's iOS SDK. Reported state: ${
+                          settingsControl.tuyaOnline === false
+                            ? 'offline'
+                            : (() => {
+                                const dpId = getTuyaSwitchDpId(settingsControl);
+                                const value = dpId
+                                  ? settingsControl.tuyaDps?.[dpId]
+                                  : undefined;
+                                return typeof value === 'boolean'
+                                  ? value
+                                    ? 'on'
+                                    : 'off'
+                                  : 'not available';
+                              })()
+                        }.`
+                      : 'This tile runs its saved ON/OFF Shortcuts. iOS opens Shortcuts; the label shows the last requested action, not confirmed device state.'}
                   </Text>
                 </View>
               </View>
+              {settingsControl?.controlMethod === 'tuya-sdk' ? (
+                <View style={styles.wattageField}>
+                  <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                    Tuya device ID: {settingsControl.tuyaDeviceId ?? 'Not linked'}
+                  </Text>
+                  <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                    Removing this tile will not remove the device from your Tuya
+                    account.
+                  </Text>
+                </View>
+              ) : (
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
                   ON Shortcut name
@@ -1282,6 +1614,7 @@ export default function HomeScreen() {
                   Enter the exact names from the Shortcuts app. The tile runs ON first, then alternates using its last requested action.
                 </Text>
               </View>
+              )}
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
                   Rated wattage
@@ -1332,7 +1665,8 @@ export default function HomeScreen() {
                   </Pressable>
                 </View>
                 <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                  Saved for future power estimates. Live device status is unavailable here.
+                  The active total uses reported ON state for Tuya devices and the
+                  last requested ON state for Shortcut tiles.
                 </Text>
                 {wattageError && (
                   <Text style={[styles.deviceMeta, { color: colors.destructive }]}>
@@ -1370,6 +1704,17 @@ export default function HomeScreen() {
           </KeyboardControllerAvoidingView>
         </View>
       </Modal>
+      <TuyaPairingFlow
+        visible={tuyaPairingVisible}
+        roomName={activeRoom?.name ?? 'this room'}
+        deviceName={
+          controlName.trim() ||
+          deviceKinds.find((kind) => kind.key === selectedKind)?.defaultName ||
+          'Device'
+        }
+        onClose={() => setTuyaPairingVisible(false)}
+        onPaired={addTuyaControl}
+      />
     </View>
   );
 }
@@ -1631,6 +1976,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   submitText: { fontSize: 13, fontWeight: '700' },
+  pairTuyaButton: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  pairTuyaButtonText: { fontSize: 13, fontWeight: '700' },
   kindGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   kindOption: {
     width: '48%',

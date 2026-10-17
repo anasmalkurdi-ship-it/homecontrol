@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "main": "expo-router/entry",
+  "expo": {
+    "autolinking": {
+      "searchPaths": ["./modules", "./node_modules", "../../node_modules"]
+    }
+  },
   "scripts": {
     "dev": "sh -c 'if [ -n \"$REPLIT_EXPO_SESSION_SECRET\" ]; then pnpm exec create-launch login --session \"$REPLIT_EXPO_SESSION_SECRET\" || true; fi' && EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=$CLERK_PUBLISHABLE_KEY EXPO_PACKAGER_PROXY_URL=https://$REPLIT_EXPO_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_REPL_ID=$REPL_ID REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN pnpm exec expo start --localhost --port $PORT",
     "build": "node scripts/build.js",
@@ -57,8 +62,13 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "expo": "~57.0.29",
     "expo-auth-session": "~57.0.16",
     "expo-crypto": "~57.0.4",
-    "expo-secure-store": "~57.0.4"
+    "expo-dev-client": "~57.0.20",
+    "expo-modules-core": "~57.0.23",
+    "expo-secure-store": "~57.0.4",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
   }
 }
