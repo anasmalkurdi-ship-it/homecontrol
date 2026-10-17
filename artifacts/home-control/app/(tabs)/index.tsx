@@ -13,7 +13,7 @@ import {
 import type { TuyaDevice } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -166,13 +166,14 @@ function parseHomeData(raw: string | null): HomeData {
 
 function LiveTuyaControlCard({
   control,
-  onRemove,
+  onOpenSettings,
 }: {
   control: HomeControl;
-  onRemove: () => void;
+  onOpenSettings: () => void;
 }) {
   const colors = useColors();
   const queryClient = useQueryClient();
+  const longPressTriggered = useRef(false);
   const definition = deviceKinds.find((kind) => kind.key === control.kind);
   const deviceId = control.tuyaDeviceId ?? '';
   const controlsQuery = useGetTuyaDeviceControls(deviceId, {
@@ -205,11 +206,17 @@ function LiveTuyaControlCard({
             ?.value,
         );
   const isOffline = controlsQuery.data?.online === false;
+  const isUnavailable =
+    switchState === null ||
+    isOffline ||
+    controlsQuery.isLoading ||
+    mutation.isPending;
   const toggle = () => {
     if (
       !switchCode ||
       switchState === null ||
       isOffline ||
+      mutation.isPending ||
       !control.tuyaDeviceId
     ) {
       return;
@@ -220,12 +227,58 @@ function LiveTuyaControlCard({
     });
     void Haptics.selectionAsync();
   };
+  const openSettings = () => {
+    longPressTriggered.current = true;
+    onOpenSettings();
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+  const handlePress = () => {
+    if (longPressTriggered.current) {
+      longPressTriggered.current = false;
+      return;
+    }
+    toggle();
+  };
+  const statusLabel = controlsQuery.isLoading
+    ? 'Reading Tuya status…'
+    : controlsQuery.isError
+      ? 'Could not load device'
+      : isOffline
+        ? 'Offline · Tuya'
+        : switchState === null
+          ? 'No supported on/off status'
+          : switchState
+            ? 'On · Tuya'
+            : 'Off · Tuya';
 
   return (
-    <View
-      style={[
+    <Pressable
+      onPressIn={() => {
+        longPressTriggered.current = false;
+      }}
+      onPress={handlePress}
+      onLongPress={openSettings}
+      onAccessibilityAction={(event) => {
+        if (event.nativeEvent.actionName === 'longpress') openSettings();
+      }}
+      delayLongPress={500}
+      accessibilityRole="switch"
+      accessibilityState={{
+        checked: switchState === true,
+        disabled: isUnavailable,
+      }}
+      accessibilityLabel={`${control.name} Tuya switch`}
+      accessibilityHint="Tap anywhere to toggle. Press and hold for device settings."
+      accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
+      testID={`toggle-control-${control.id}`}
+      style={({ pressed }) => [
         styles.controlCard,
-        { backgroundColor: colors.card, borderColor: colors.border },
+        {
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+          opacity: isUnavailable ? 0.7 : 1,
+        },
+        pressed && styles.pressed,
       ]}
     >
       <View
@@ -265,17 +318,7 @@ function LiveTuyaControlCard({
             ]}
           />
           <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-            {controlsQuery.isLoading
-              ? 'Reading Tuya status…'
-              : controlsQuery.isError
-                ? 'Could not load device'
-                : isOffline
-                  ? 'Offline · Tuya'
-                : switchState === null
-                  ? 'No supported on/off status'
-                  : switchState
-                    ? 'On · Tuya'
-                    : 'Off · Tuya'}
+            {statusLabel}
           </Text>
         </View>
         {mutation.isError && (
@@ -284,45 +327,12 @@ function LiveTuyaControlCard({
           </Text>
         )}
       </View>
-      <Pressable
-        onPress={onRemove}
-        accessibilityLabel={`Remove ${control.name} from this room`}
-        hitSlop={8}
-        style={({ pressed }) => [
-          styles.removeButton,
-          pressed && styles.pressed,
-        ]}
-      >
-        <MaterialCommunityIcons
-          name="close"
-          size={17}
-          color={colors.mutedForeground}
-        />
-      </Pressable>
-      <Pressable
-        onPress={toggle}
-        accessibilityRole="switch"
-        accessibilityState={{
-          checked: switchState === true,
-          disabled:
-            switchState === null ||
-            isOffline ||
-            controlsQuery.isLoading ||
-            mutation.isPending,
-        }}
-        accessibilityLabel={`${control.name} Tuya switch`}
-        disabled={
-          switchState === null ||
-          isOffline ||
-          controlsQuery.isLoading ||
-          mutation.isPending
-        }
+      <View
         style={[
-          styles.toggleTrack,
+          styles.stateBadge,
           {
             backgroundColor:
-              switchState === true ? colors.primary : colors.secondary,
-            opacity: switchState === null || mutation.isPending ? 0.55 : 1,
+              switchState === true ? colors.accent + '33' : colors.secondary,
           },
         ]}
       >
@@ -332,23 +342,22 @@ function LiveTuyaControlCard({
             color={switchState === true ? colors.primaryForeground : colors.primary}
           />
         ) : (
-          <View
+          <Text
             style={[
-              styles.toggleThumb,
+              styles.stateBadgeText,
               {
-                backgroundColor:
+                color:
                   switchState === true
-                    ? colors.primaryForeground
-                    : colors.card,
-                transform: [
-                  { translateX: switchState === true ? 20 : 2 },
-                ],
+                    ? colors.accentForeground
+                    : colors.mutedForeground,
               },
             ]}
-          />
+          >
+            {switchState === true ? 'On' : switchState === false ? 'Off' : '—'}
+          </Text>
         )}
-      </Pressable>
-    </View>
+      </View>
+    </Pressable>
   );
 }
 
@@ -361,6 +370,7 @@ export default function HomeScreen() {
   const [ready, setReady] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
@@ -368,6 +378,7 @@ export default function HomeScreen() {
     null,
   );
   const [linkMessage, setLinkMessage] = useState<string | null>(null);
+  const longPressedControlIds = useRef<Set<string>>(new Set());
 
   const connectionQuery = useGetTuyaConnection({
     query: {
@@ -426,6 +437,8 @@ export default function HomeScreen() {
     () => data.rooms.find((room) => room.id === data.activeRoomId) ?? null,
     [data.activeRoomId, data.rooms],
   );
+  const settingsControl =
+    data.controls.find((control) => control.id === settingsControlId) ?? null;
   const roomControls = useMemo(
     () =>
       data.controls.filter((control) => control.roomId === activeRoom?.id),
@@ -839,8 +852,8 @@ export default function HomeScreen() {
                         <LiveTuyaControlCard
                           key={control.id}
                           control={control}
-                          onRemove={() =>
-                            removeControl(control.id, control.name)
+                          onOpenSettings={() =>
+                            setSettingsControlId(control.id)
                           }
                         />
                       );
@@ -850,14 +863,42 @@ export default function HomeScreen() {
                     );
                     const isOn = control.previewOn;
                     return (
-                      <View
+                      <Pressable
                         key={control.id}
-                        style={[
+                        onPressIn={() => {
+                          longPressedControlIds.current.delete(control.id);
+                        }}
+                        onPress={() => {
+                          if (longPressedControlIds.current.has(control.id)) {
+                            longPressedControlIds.current.delete(control.id);
+                            return;
+                          }
+                          toggleControl(control.id);
+                        }}
+                        onLongPress={() => {
+                          longPressedControlIds.current.add(control.id);
+                          setSettingsControlId(control.id);
+                          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        }}
+                        onAccessibilityAction={(event) => {
+                          if (event.nativeEvent.actionName === 'longpress') {
+                            setSettingsControlId(control.id);
+                          }
+                        }}
+                        delayLongPress={500}
+                        accessibilityRole="switch"
+                        accessibilityState={{ checked: isOn }}
+                        accessibilityLabel={`${control.name} preview switch`}
+                        accessibilityHint="Tap anywhere to toggle. Press and hold for device settings."
+                        accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
+                        testID={`toggle-control-${control.id}`}
+                        style={({ pressed }) => [
                           styles.controlCard,
                           {
                             backgroundColor: colors.card,
                             borderColor: colors.border,
                           },
+                          pressed && styles.pressed,
                         ]}
                       >
                         <View
@@ -904,50 +945,30 @@ export default function HomeScreen() {
                             </Text>
                           </View>
                         </View>
-                        <Pressable
-                          onPress={() => removeControl(control.id, control.name)}
-                          accessibilityLabel={`Remove ${control.name}`}
-                          testID={`remove-control-${control.id}`}
-                          hitSlop={8}
-                          style={({ pressed }) => [
-                            styles.removeButton,
-                            pressed && styles.pressed,
-                          ]}
-                        >
-                          <MaterialCommunityIcons
-                            name="close"
-                            size={17}
-                            color={colors.mutedForeground}
-                          />
-                        </Pressable>
-                        <Pressable
-                          onPress={() => toggleControl(control.id)}
-                          accessibilityRole="switch"
-                          accessibilityState={{ checked: isOn }}
-                          accessibilityLabel={`${control.name} preview switch`}
-                          testID={`toggle-control-${control.id}`}
+                        <View
                           style={[
-                            styles.toggleTrack,
+                            styles.stateBadge,
                             {
                               backgroundColor: isOn
-                                ? colors.primary
+                                ? colors.accent + '33'
                                 : colors.secondary,
                             },
                           ]}
                         >
-                          <View
+                          <Text
                             style={[
-                              styles.toggleThumb,
+                              styles.stateBadgeText,
                               {
-                                backgroundColor: isOn
-                                  ? colors.primaryForeground
-                                  : colors.card,
-                                transform: [{ translateX: isOn ? 20 : 2 }],
+                                color: isOn
+                                  ? colors.accentForeground
+                                  : colors.mutedForeground,
                               },
                             ]}
-                          />
-                        </Pressable>
-                      </View>
+                          >
+                            {isOn ? 'On' : 'Off'}
+                          </Text>
+                        </View>
+                      </Pressable>
                     );
                   })
                 ) : (
@@ -1417,6 +1438,107 @@ export default function HomeScreen() {
           </View>
         </KeyboardAvoidingView>
       </Modal>
+      <Modal
+        visible={settingsControl !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSettingsControlId(null)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable
+            style={styles.modalScrim}
+            onPress={() => setSettingsControlId(null)}
+            accessibilityLabel="Close device settings"
+          />
+          <View
+            style={[
+              styles.sheet,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                paddingBottom: Math.max(insets.bottom, 18) + 12,
+              },
+            ]}
+          >
+            <View style={styles.sheetHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
+                  Device settings
+                </Text>
+                <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
+                  {settingsControl?.name ?? ''}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setSettingsControlId(null)}
+                accessibilityRole="button"
+                accessibilityLabel="Close device settings"
+                style={({ pressed }) => [
+                  styles.smallIconButton,
+                  { backgroundColor: colors.secondary, borderColor: colors.border },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name="close"
+                  size={18}
+                  color={colors.foreground}
+                />
+              </Pressable>
+            </View>
+            <View
+              style={[
+                styles.settingsSummary,
+                { backgroundColor: colors.secondary },
+              ]}
+            >
+              <MaterialCommunityIcons
+                name={
+                  deviceKinds.find((kind) => kind.key === settingsControl?.kind)
+                    ?.icon ?? 'cog-outline'
+                }
+                size={20}
+                color={colors.primary}
+              />
+              <View style={{ flex: 1, gap: 4 }}>
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  {deviceKinds.find((kind) => kind.key === settingsControl?.kind)
+                    ?.label ?? 'Device'}
+                </Text>
+                <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                  Tap the whole tile to toggle. Press and hold it to open these settings.
+                </Text>
+              </View>
+            </View>
+            <Pressable
+              onPress={() => {
+                if (!settingsControl) return;
+                const control = settingsControl;
+                setSettingsControlId(null);
+                removeControl(control.id, control.name);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Remove ${settingsControl?.name ?? 'device'} from this room`}
+              accessibilityHint="This removes the tile from this room only. The device remains paired in Smart Life."
+              testID="remove-control-from-settings-button"
+              style={({ pressed }) => [
+                styles.settingsRemoveButton,
+                { borderColor: colors.destructive },
+                pressed && styles.pressed,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name="delete-outline"
+                size={18}
+                color={colors.destructive}
+              />
+              <Text style={[styles.settingsRemoveText, { color: colors.destructive }]}>
+                Remove from room
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1552,23 +1674,15 @@ const styles = StyleSheet.create({
   deviceMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   previewDot: { width: 6, height: 6, borderRadius: 3 },
   deviceMeta: { fontSize: 9, fontWeight: '500' },
-  removeButton: {
-    width: 24,
+  stateBadge: {
+    minWidth: 48,
     height: 28,
+    borderRadius: 14,
+    paddingHorizontal: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  toggleTrack: {
-    width: 46,
-    height: 26,
-    borderRadius: 20,
-    justifyContent: 'center',
-  },
-  toggleThumb: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-  },
+  stateBadgeText: { fontSize: 10, fontWeight: '700' },
   emptyCard: {
     flex: 1,
     minHeight: 230,
@@ -1627,6 +1741,26 @@ const styles = StyleSheet.create({
   },
   sheetTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.4 },
   sheetSubtitle: { fontSize: 11, lineHeight: 16, marginTop: 5, maxWidth: 270 },
+  settingsSummary: {
+    minHeight: 74,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  settingsRemoveButton: {
+    minHeight: 48,
+    borderWidth: 1,
+    borderRadius: 15,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  settingsRemoveText: { fontSize: 13, fontWeight: '700' },
   textInput: {
     height: 48,
     borderWidth: 1,
