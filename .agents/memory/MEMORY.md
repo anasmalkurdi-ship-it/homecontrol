@@ -1,1 +1,1 @@
-- [Tuya connection scope](tuya-connection-scope.md) — pair in Smart Life, then use Tuya Cloud for Home Control device access and commands.
+- [Tuya connection direction](tuya-connection-scope.md) — user now wants native iPhone-only Tuya SDK pairing; no web app.

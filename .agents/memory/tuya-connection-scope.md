@@ -1,10 +1,12 @@
 ---
 name: Tuya connection scope
-description: The user's chosen Smart Life pairing and Tuya Cloud control flow for Home Control.
+description: The user's current direct-pairing requirement and native-build constraint for Home Control.
 ---
 
-Pair devices in Smart Life, then have Home Control list and control them through the Tuya Cloud API. The saved `TUYA_UID` must exactly match the UID of the Smart Life account linked to the same Tuya Cloud project; a mismatch can cause 1106 even when services are authorized and devices are linked. Do not pursue native Smart Life SDK or direct local pairing unless the user changes direction.
+The user's current requirement is a native iPhone-only Home Control app that pairs devices from inside Home Control using Tuya's App SDK; they do not want a web app. This supersedes the earlier Smart Life pairing + Tuya Cloud control direction.
 
-**Why:** The user explicitly chose to keep pairing in Smart Life and use the platform for Home Control. Matching the linked account UID restored device listing and an OFF command was confirmed by Tuya.
+The supplied Tuya iOS SDK archive identifies itself as deprecated and integrates through CocoaPods. Replit's current managed Expo build flow does not support custom native modules or custom CocoaPods SDKs, so direct pairing cannot be built and verified through the current Replit publishing workflow.
 
-**How to apply:** Keep pairing outside Home Control; troubleshoot exact UID match first, then project credentials, region, API authorization, and per-device control permission.
+**Why:** The user changed the product scope to in-app native pairing and explicitly selected native iPhone only. Avoid continuing the web/PWA direction or claiming the old cloud-control quota is bypassed by the App SDK.
+
+**How to apply:** Before implementing direct pairing, verify whether a supported custom iOS build path is available. Otherwise explain that the Tuya native SDK requires a native build workflow outside Replit; keep cloud pairing/control as the supported Replit fallback.
