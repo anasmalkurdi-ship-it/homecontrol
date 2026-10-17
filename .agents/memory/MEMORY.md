@@ -1,1 +1,2 @@
 - [Tuya connection direction](tuya-connection-scope.md) — user now wants native iPhone-only Tuya SDK pairing; no web app.
+- [GitHub shell authentication](github-shell-auth.md) — a connected GitHub account may not authenticate shell `gh` or HTTPS pushes; verify before promising sync.
