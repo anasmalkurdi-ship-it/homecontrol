@@ -7,6 +7,8 @@ The user wants to migrate the existing Home Control app from Shortcut-based cont
 
 The supplied Tuya iOS SDK archive identifies itself as deprecated and integrates through CocoaPods. Replit's current managed Expo build flow does not support custom native modules or custom CocoaPods SDKs, so direct pairing cannot be built and verified through the current Replit publishing workflow.
 
-**Why:** The user provided an explicit migration plan: preserve current working controls and interface while adding native Tuya pairing/control; remove Shortcut support only after migration. The supplied iOS SDK archive is an older deprecated 3.32.x sample, not the current platform-built v5 package.
+Tuya's public Swift sample is useful for current API examples, but intentionally omits the app-specific `ios_core_sdk` package. Public samples and integration docs may show different SDK versions; the app-specific security bundle must come from the user's Tuya Developer Platform app.
 
-**How to apply:** Keep Shortcut launching enabled for unmigrated devices; use `controlMethod` to distinguish Shortcut from Tuya SDK devices, and migrate one device at a time. Use the current Tuya v5 SDK package built for the app from Tuya Developer Platform; never fabricate API names or use the deprecated archive. Do not put secrets in JavaScript or logs, and do not fall back to Tuya Cloud.
+**Why:** The user provided an explicit migration plan: preserve current working controls and interface while adding native Tuya pairing/control; remove Shortcut support only after migration. The supplied archive is deprecated, and the online public sample does not contain the app-specific security SDK needed to build.
+
+**How to apply:** Keep Shortcut launching enabled for unmigrated devices; use `controlMethod` to distinguish Shortcut from Tuya SDK devices, and migrate one device at a time. Verify current SDK APIs from the official sample, but require the app-specific security package from Tuya Developer Platform; never fabricate API names or use the deprecated archive. Do not put secrets in JavaScript or logs, and do not fall back to Tuya Cloud.
