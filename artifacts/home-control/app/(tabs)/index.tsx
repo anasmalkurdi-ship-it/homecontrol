@@ -4,6 +4,7 @@ import { useClerk } from '@clerk/expo';
 import {
   getGetTuyaConnectionQueryKey,
   getGetTuyaDeviceControlsQueryKey,
+  getGetTuyaDeviceControlsQueryOptions,
   getGetTuyaDevicesQueryKey,
   useGetTuyaConnection,
   useGetTuyaDevices,
@@ -11,12 +12,13 @@ import {
   useSendTuyaDeviceCommands,
 } from '@workspace/api-client-react';
 import type { TuyaDevice } from '@workspace/api-client-react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueries, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -27,10 +29,18 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import {
+  KeyboardAvoidingView as KeyboardControllerAvoidingView,
+} from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 
-type DeviceKind = 'chandelier' | 'sideLight' | 'heater' | 'airConditioner';
+type DeviceKind =
+  | 'chandelier'
+  | 'sideLight'
+  | 'heater'
+  | 'nightLight'
+  | 'airConditioner';
 
 type Room = {
   id: string;
@@ -45,6 +55,7 @@ type HomeControl = {
   previewOn: boolean;
   tuyaDeviceId?: string;
   switchCode?: string;
+  wattage?: number;
 };
 
 type HomeData = {
@@ -74,13 +85,19 @@ const deviceKinds: {
     key: 'sideLight',
     label: 'Side light',
     defaultName: 'Side light',
-    icon: 'floor-lamp',
+    icon: 'spotlight-beam',
   },
   {
     key: 'heater',
-    label: 'Heater',
-    defaultName: 'Heater',
-    icon: 'radiator',
+    label: 'Water heater',
+    defaultName: 'Water heater',
+    icon: 'water-boiler',
+  },
+  {
+    key: 'nightLight',
+    label: 'Night light',
+    defaultName: 'Night light',
+    icon: 'lightbulb-night',
   },
   {
     key: 'airConditioner',
@@ -99,6 +116,7 @@ function isDeviceKind(value: unknown): value is DeviceKind {
     value === 'chandelier' ||
     value === 'sideLight' ||
     value === 'heater' ||
+    value === 'nightLight' ||
     value === 'airConditioner'
   );
 }
@@ -152,7 +170,11 @@ function parseHomeData(raw: string | null): HomeData {
           (control.tuyaDeviceId === undefined ||
             typeof control.tuyaDeviceId === 'string') &&
           (control.switchCode === undefined ||
-            typeof control.switchCode === 'string'),
+            typeof control.switchCode === 'string') &&
+          (control.wattage === undefined ||
+            (typeof control.wattage === 'number' &&
+              Number.isFinite(control.wattage) &&
+              control.wattage >= 0)),
       )
     : [];
 
@@ -292,7 +314,7 @@ function LiveTuyaControlCard({
       >
         <MaterialCommunityIcons
           name={definition?.icon ?? 'lightbulb-outline'}
-          size={24}
+          size={21}
           color={switchState === true ? colors.accentForeground : colors.primary}
         />
       </View>
@@ -371,6 +393,8 @@ export default function HomeScreen() {
   const [storageError, setStorageError] = useState(false);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
+  const [wattageInput, setWattageInput] = useState('');
+  const [wattageError, setWattageError] = useState<string | null>(null);
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
@@ -408,6 +432,29 @@ export default function HomeScreen() {
       },
     },
   );
+  const linkedTuyaDeviceIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          data.controls
+            .map((control) => control.tuyaDeviceId)
+            .filter((deviceId): deviceId is string => !!deviceId),
+        ),
+      ),
+    [data.controls],
+  );
+  const tuyaStatusQueries = useQueries({
+    queries: linkedTuyaDeviceIds.map((deviceId) =>
+      getGetTuyaDeviceControlsQueryOptions(deviceId, {
+        query: {
+            queryKey: getGetTuyaDeviceControlsQueryKey(deviceId),
+          retry: false,
+          staleTime: 20_000,
+          refetchInterval: 30_000,
+        },
+      }),
+    ),
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -444,6 +491,56 @@ export default function HomeScreen() {
       data.controls.filter((control) => control.roomId === activeRoom?.id),
     [activeRoom?.id, data.controls],
   );
+  const activeLoad = useMemo(() => {
+    const queryIndexByDeviceId = new Map(
+      linkedTuyaDeviceIds.map((deviceId, index) => [deviceId, index] as const),
+    );
+    let activeControls = 0;
+    let unknownStatusCount = 0;
+    let missingWattageCount = 0;
+    let watts = 0;
+
+    for (const control of data.controls) {
+      let isOn: boolean | null;
+
+      if (control.tuyaDeviceId) {
+        const queryIndex = queryIndexByDeviceId.get(control.tuyaDeviceId);
+        const query =
+          queryIndex === undefined ? undefined : tuyaStatusQueries[queryIndex];
+        const deviceData = query?.data;
+        if (!deviceData || query?.isError || deviceData.online === false) {
+          unknownStatusCount += 1;
+          continue;
+        }
+        const switchCode =
+          control.switchCode ??
+          findPowerFunction(deviceData.functions ?? [])?.code;
+        isOn = switchCode
+          ? parseBooleanState(
+              deviceData.status.find((status) => status.code === switchCode)
+                ?.value,
+            )
+          : null;
+      } else {
+        isOn = control.previewOn;
+      }
+
+      if (isOn === null) {
+        unknownStatusCount += 1;
+        continue;
+      }
+      if (!isOn) continue;
+
+      activeControls += 1;
+      if (typeof control.wattage === 'number') {
+        watts += control.wattage;
+      } else {
+        missingWattageCount += 1;
+      }
+    }
+
+    return { activeControls, unknownStatusCount, missingWattageCount, watts };
+  }, [data.controls, linkedTuyaDeviceIds, tuyaStatusQueries]);
   const assignedDeviceIds = useMemo(
     () =>
       new Set(
@@ -540,6 +637,42 @@ export default function HomeScreen() {
     void Haptics.selectionAsync();
   };
 
+  const openControlSettings = (controlId: string) => {
+    const control = data.controls.find((item) => item.id === controlId);
+    setWattageInput(
+      typeof control?.wattage === 'number' ? String(control.wattage) : '',
+    );
+    setWattageError(null);
+    setSettingsControlId(controlId);
+  };
+
+  const saveControlWattage = () => {
+    if (!settingsControl) return;
+    const input = wattageInput.trim();
+    const parsedWattage = input ? Number(input.replace(',', '.')) : undefined;
+    if (
+      input &&
+      (parsedWattage === undefined ||
+        !Number.isFinite(parsedWattage) ||
+        parsedWattage < 0)
+    ) {
+      setWattageError('Enter a valid wattage of 0 or more.');
+      return;
+    }
+
+    setData((current) => ({
+      ...current,
+      controls: current.controls.map((control) =>
+        control.id === settingsControl.id
+          ? { ...control, wattage: parsedWattage }
+          : control,
+      ),
+    }));
+    setWattageError(null);
+    Keyboard.dismiss();
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
   const removeControl = (controlId: string, name: string) => {
     Alert.alert(
       'Remove from room?',
@@ -574,6 +707,13 @@ export default function HomeScreen() {
   const selectedDefinition = deviceKinds.find(
     (kind) => kind.key === selectedKind,
   );
+  const formattedActiveWatts = Number(activeLoad.watts.toFixed(1)).toLocaleString();
+  const activeWattageLabel =
+    activeLoad.unknownStatusCount > 0
+      ? '— W'
+      : activeLoad.missingWattageCount > 0
+        ? `≥ ${formattedActiveWatts} W`
+        : `${formattedActiveWatts} W`;
 
   if (!ready) {
     return (
@@ -678,21 +818,43 @@ export default function HomeScreen() {
       </View>
 
       <View
+        accessibilityLabel={`Active home load ${activeWattageLabel}`}
+        testID="active-home-load"
         style={[
-          styles.notice,
-          { backgroundColor: colors.secondary, borderColor: colors.border },
+          styles.activeLoadCard,
+          { backgroundColor: colors.card, borderColor: colors.border },
         ]}
       >
-        <MaterialCommunityIcons
-          name="information-outline"
-          size={18}
-          color={colors.primary}
-        />
-        <Text style={[styles.noticeText, { color: colors.secondaryForeground }]}>
-          {connectionQuery.data?.connected
-            ? 'Pair devices in Smart Life first. Then add them to a room here to control them through Tuya Cloud.'
-            : connectionQuery.data?.message ??
-              'Tuya is not connected yet. Check the project setup and region.'}
+        <View
+          style={[
+            styles.activeLoadIcon,
+            { backgroundColor: colors.accent + '33' },
+          ]}
+        >
+          <MaterialCommunityIcons
+            name="flash"
+            size={19}
+            color={colors.accentForeground}
+          />
+        </View>
+        <View style={styles.activeLoadInfo}>
+          <Text style={[styles.activeLoadTitle, { color: colors.foreground }]}>
+            ESTIMATED ACTIVE POWER
+          </Text>
+          <Text style={[styles.activeLoadMeta, { color: colors.mutedForeground }]}>
+            {activeLoad.unknownStatusCount > 0
+              ? `${activeLoad.activeControls} on · ${activeLoad.unknownStatusCount} status unknown`
+              : activeLoad.activeControls === 0
+                ? 'No devices currently on'
+                : `${activeLoad.activeControls} on${
+                    activeLoad.missingWattageCount > 0
+                      ? ` · ${activeLoad.missingWattageCount} need wattage`
+                      : ''
+                  }`}
+          </Text>
+        </View>
+        <Text style={[styles.activeLoadValue, { color: colors.foreground }]}>
+          {activeWattageLabel}
         </Text>
       </View>
 
@@ -747,6 +909,9 @@ export default function HomeScreen() {
                   key={room.id}
                   onPress={() => selectRoom(room.id)}
                   accessibilityRole="button"
+                  accessibilityLabel={`${room.name}, ${count} ${
+                    count === 1 ? 'control' : 'controls'
+                  }`}
                   accessibilityState={{ selected: active }}
                   testID={`room-${index}`}
                   style={({ pressed }) => [
@@ -763,31 +928,34 @@ export default function HomeScreen() {
                     size={19}
                     color={active ? colors.primaryForeground : colors.mutedForeground}
                   />
-                  <Text
-                    numberOfLines={2}
-                    style={[
-                      styles.roomName,
-                      {
-                        color: active
-                          ? colors.primaryForeground
-                          : colors.foreground,
-                      },
-                    ]}
-                  >
-                    {room.name}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.roomCount,
-                      {
-                        color: active
-                          ? colors.primaryForeground + 'B8'
-                          : colors.mutedForeground,
-                      },
-                    ]}
-                  >
-                    {count} {count === 1 ? 'control' : 'controls'}
-                  </Text>
+                  <View style={styles.roomText}>
+                    <Text
+                      numberOfLines={1}
+                      ellipsizeMode="tail"
+                      style={[
+                        styles.roomName,
+                        {
+                          color: active
+                            ? colors.primaryForeground
+                            : colors.foreground,
+                        },
+                      ]}
+                    >
+                      {room.name}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.roomCount,
+                        {
+                          color: active
+                            ? colors.primaryForeground + 'B8'
+                            : colors.mutedForeground,
+                        },
+                      ]}
+                    >
+                      {count} {count === 1 ? 'control' : 'controls'}
+                    </Text>
+                  </View>
                 </Pressable>
               );
             })}
@@ -853,7 +1021,7 @@ export default function HomeScreen() {
                           key={control.id}
                           control={control}
                           onOpenSettings={() =>
-                            setSettingsControlId(control.id)
+                            openControlSettings(control.id)
                           }
                         />
                       );
@@ -877,12 +1045,12 @@ export default function HomeScreen() {
                         }}
                         onLongPress={() => {
                           longPressedControlIds.current.add(control.id);
-                          setSettingsControlId(control.id);
+                          openControlSettings(control.id);
                           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                         }}
                         onAccessibilityAction={(event) => {
                           if (event.nativeEvent.actionName === 'longpress') {
-                            setSettingsControlId(control.id);
+                            openControlSettings(control.id);
                           }
                         }}
                         delayLongPress={500}
@@ -913,7 +1081,7 @@ export default function HomeScreen() {
                         >
                           <MaterialCommunityIcons
                             name={definition?.icon ?? 'lightbulb-outline'}
-                            size={24}
+                            size={21}
                             color={isOn ? colors.accentForeground : colors.primary}
                           />
                         </View>
@@ -994,7 +1162,7 @@ export default function HomeScreen() {
                       Start this room
                     </Text>
                     <Text style={[styles.emptyBody, { color: colors.mutedForeground }]}>
-                      Add a light, heater, or air conditioner tile to arrange your controls.
+                      Add a chandelier, spot light, night light, water heater, or air conditioner tile to arrange your controls.
                     </Text>
                     <Pressable
                       onPress={openControlDialog}
@@ -1450,93 +1618,157 @@ export default function HomeScreen() {
             onPress={() => setSettingsControlId(null)}
             accessibilityLabel="Close device settings"
           />
-          <View
-            style={[
-              styles.sheet,
-              {
-                backgroundColor: colors.card,
-                borderColor: colors.border,
-                paddingBottom: Math.max(insets.bottom, 18) + 12,
-              },
-            ]}
+          <KeyboardControllerAvoidingView
+            behavior="padding"
+            keyboardVerticalOffset={0}
+            style={styles.settingsKeyboard}
           >
-            <View style={styles.sheetHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
-                  Device settings
+            <View
+              style={[
+                styles.sheet,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  paddingBottom: Math.max(insets.bottom, 18) + 12,
+                },
+              ]}
+            >
+              <View style={styles.sheetHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
+                    Device settings
+                  </Text>
+                  <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
+                    {settingsControl?.name ?? ''}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => setSettingsControlId(null)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Close device settings"
+                  style={({ pressed }) => [
+                    styles.smallIconButton,
+                    { backgroundColor: colors.secondary, borderColor: colors.border },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <MaterialCommunityIcons
+                    name="close"
+                    size={18}
+                    color={colors.foreground}
+                  />
+                </Pressable>
+              </View>
+              <View
+                style={[
+                  styles.settingsSummary,
+                  { backgroundColor: colors.secondary },
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={
+                    deviceKinds.find((kind) => kind.key === settingsControl?.kind)
+                      ?.icon ?? 'cog-outline'
+                  }
+                  size={20}
+                  color={colors.primary}
+                />
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                    {deviceKinds.find((kind) => kind.key === settingsControl?.kind)
+                      ?.label ?? 'Device'}
+                  </Text>
+                  <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                    Tap the whole tile to toggle. Press and hold it to open these settings.
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.wattageField}>
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  Rated wattage
                 </Text>
-                <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
-                  {settingsControl?.name ?? ''}
+                <View style={styles.wattageInputRow}>
+                  <TextInput
+                    value={wattageInput}
+                    onChangeText={(value) => {
+                      setWattageInput(value);
+                      setWattageError(null);
+                    }}
+                    keyboardType="decimal-pad"
+                    returnKeyType="done"
+                    onSubmitEditing={saveControlWattage}
+                    placeholder="Enter watts"
+                    placeholderTextColor={colors.mutedForeground}
+                    accessibilityLabel="Device wattage"
+                    testID="wattage-input"
+                    style={[
+                      styles.textInput,
+                      styles.wattageInput,
+                      {
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                        color: colors.foreground,
+                      },
+                    ]}
+                  />
+                  <Text style={[styles.wattageUnit, { color: colors.mutedForeground }]}>
+                    W
+                  </Text>
+                  <Pressable
+                    onPress={saveControlWattage}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save wattage"
+                    testID="save-wattage-button"
+                    style={({ pressed }) => [
+                      styles.wattageSaveButton,
+                      { backgroundColor: colors.primary },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="check"
+                      size={20}
+                      color={colors.primaryForeground}
+                    />
+                  </Pressable>
+                </View>
+                <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                  Used in estimated active power. Leave blank if unknown.
                 </Text>
+                {wattageError && (
+                  <Text style={[styles.deviceMeta, { color: colors.destructive }]}>
+                    {wattageError}
+                  </Text>
+                )}
               </View>
               <Pressable
-                onPress={() => setSettingsControlId(null)}
+                onPress={() => {
+                  if (!settingsControl) return;
+                  const control = settingsControl;
+                  setSettingsControlId(null);
+                  removeControl(control.id, control.name);
+                }}
                 accessibilityRole="button"
-                accessibilityLabel="Close device settings"
+                accessibilityLabel={`Remove ${settingsControl?.name ?? 'device'} from this room`}
+                accessibilityHint="This removes the tile from this room only. The device remains paired in Smart Life."
+                testID="remove-control-from-settings-button"
                 style={({ pressed }) => [
-                  styles.smallIconButton,
-                  { backgroundColor: colors.secondary, borderColor: colors.border },
+                  styles.settingsRemoveButton,
+                  { borderColor: colors.destructive },
                   pressed && styles.pressed,
                 ]}
               >
                 <MaterialCommunityIcons
-                  name="close"
+                  name="delete-outline"
                   size={18}
-                  color={colors.foreground}
+                  color={colors.destructive}
                 />
+                <Text style={[styles.settingsRemoveText, { color: colors.destructive }]}>
+                  Remove from room
+                </Text>
               </Pressable>
             </View>
-            <View
-              style={[
-                styles.settingsSummary,
-                { backgroundColor: colors.secondary },
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={
-                  deviceKinds.find((kind) => kind.key === settingsControl?.kind)
-                    ?.icon ?? 'cog-outline'
-                }
-                size={20}
-                color={colors.primary}
-              />
-              <View style={{ flex: 1, gap: 4 }}>
-                <Text style={[styles.deviceName, { color: colors.foreground }]}>
-                  {deviceKinds.find((kind) => kind.key === settingsControl?.kind)
-                    ?.label ?? 'Device'}
-                </Text>
-                <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                  Tap the whole tile to toggle. Press and hold it to open these settings.
-                </Text>
-              </View>
-            </View>
-            <Pressable
-              onPress={() => {
-                if (!settingsControl) return;
-                const control = settingsControl;
-                setSettingsControlId(null);
-                removeControl(control.id, control.name);
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Remove ${settingsControl?.name ?? 'device'} from this room`}
-              accessibilityHint="This removes the tile from this room only. The device remains paired in Smart Life."
-              testID="remove-control-from-settings-button"
-              style={({ pressed }) => [
-                styles.settingsRemoveButton,
-                { borderColor: colors.destructive },
-                pressed && styles.pressed,
-              ]}
-            >
-              <MaterialCommunityIcons
-                name="delete-outline"
-                size={18}
-                color={colors.destructive}
-              />
-              <Text style={[styles.settingsRemoveText, { color: colors.destructive }]}>
-                Remove from room
-              </Text>
-            </Pressable>
-          </View>
+          </KeyboardControllerAvoidingView>
         </View>
       </Modal>
     </View>
@@ -1552,6 +1784,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
+  activeLoadCard: {
+    minHeight: 62,
+    borderWidth: 1,
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  activeLoadIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeLoadInfo: { flex: 1, gap: 3 },
+  activeLoadTitle: { fontSize: 9, fontWeight: '700', letterSpacing: 1 },
+  activeLoadMeta: { fontSize: 10, fontWeight: '500' },
+  activeLoadValue: { fontSize: 18, fontWeight: '700', letterSpacing: -0.3 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   signOutButton: {
     width: 32,
@@ -1579,22 +1832,12 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   previewBadgeText: { fontSize: 10, fontWeight: '700' },
-  notice: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    borderWidth: 1,
-    borderRadius: 13,
-    paddingHorizontal: 11,
-    paddingVertical: 9,
-  },
-  noticeText: { flex: 1, fontSize: 11, lineHeight: 16 },
   storageWarning: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   workspace: { flex: 1, minHeight: 0, flexDirection: 'row' },
   roomRail: {
-    width: 105,
+    width: 122,
     borderRightWidth: 1,
-    paddingRight: 11,
+    paddingRight: 10,
     paddingTop: 4,
   },
   railHeading: {
@@ -1614,17 +1857,19 @@ const styles = StyleSheet.create({
     borderRadius: 11,
   },
   roomList: { flex: 1 },
-  roomListContent: { gap: 7, paddingBottom: 10 },
+  roomListContent: { gap: 6, paddingBottom: 10 },
   roomItem: {
-    minHeight: 74,
+    minHeight: 48,
     borderWidth: 1,
-    borderRadius: 15,
-    paddingHorizontal: 8,
-    paddingVertical: 9,
-    alignItems: 'flex-start',
+    borderRadius: 13,
+    paddingHorizontal: 7,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: 5,
+    gap: 7,
   },
+  roomText: { flex: 1, minWidth: 0, gap: 2 },
   roomName: { fontSize: 11, lineHeight: 14, fontWeight: '700' },
   roomCount: { fontSize: 8, fontWeight: '500' },
   railHint: { fontSize: 10, lineHeight: 15, paddingHorizontal: 4 },
@@ -1651,38 +1896,38 @@ const styles = StyleSheet.create({
   },
   addControlText: { fontSize: 11, fontWeight: '700' },
   controlsScroll: { flex: 1 },
-  controlsList: { gap: 9, paddingBottom: 16 },
+  controlsList: { gap: 6, paddingBottom: 12 },
   controlCard: {
-    minHeight: 75,
-    borderRadius: 17,
+    minHeight: 56,
+    borderRadius: 15,
     borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 11,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 7,
   },
   deviceIconWrap: {
-    width: 42,
-    height: 42,
-    borderRadius: 14,
+    width: 36,
+    height: 36,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  deviceInfo: { flex: 1, minWidth: 0, gap: 5 },
-  deviceName: { fontSize: 12, fontWeight: '700' },
+  deviceInfo: { flex: 1, minWidth: 0, gap: 3 },
+  deviceName: { fontSize: 11, fontWeight: '700' },
   deviceMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   previewDot: { width: 6, height: 6, borderRadius: 3 },
   deviceMeta: { fontSize: 9, fontWeight: '500' },
   stateBadge: {
-    minWidth: 48,
-    height: 28,
-    borderRadius: 14,
-    paddingHorizontal: 9,
+    minWidth: 43,
+    height: 25,
+    borderRadius: 13,
+    paddingHorizontal: 7,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  stateBadgeText: { fontSize: 10, fontWeight: '700' },
+  stateBadgeText: { fontSize: 9, fontWeight: '700' },
   emptyCard: {
     flex: 1,
     minHeight: 230,
@@ -1741,6 +1986,7 @@ const styles = StyleSheet.create({
   },
   sheetTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.4 },
   sheetSubtitle: { fontSize: 11, lineHeight: 16, marginTop: 5, maxWidth: 270 },
+  settingsKeyboard: { width: '100%' },
   settingsSummary: {
     minHeight: 74,
     borderRadius: 16,
@@ -1749,6 +1995,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  wattageField: { gap: 8 },
+  wattageInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  wattageInput: { flex: 1 },
+  wattageUnit: { fontSize: 13, fontWeight: '700' },
+  wattageSaveButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   settingsRemoveButton: {
     minHeight: 48,
