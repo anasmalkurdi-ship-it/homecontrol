@@ -308,6 +308,8 @@ export default function HomeScreen() {
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
   const [wattageInput, setWattageInput] = useState('');
   const [wattageError, setWattageError] = useState<string | null>(null);
+  const [onShortcutInput, setOnShortcutInput] = useState('');
+  const [offShortcutInput, setOffShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
@@ -392,8 +394,30 @@ export default function HomeScreen() {
     setWattageInput(
       typeof control?.wattage === 'number' ? String(control.wattage) : '',
     );
+    setOnShortcutInput(control?.onShortcutName ?? control?.shortcutName ?? '');
+    setOffShortcutInput(control?.offShortcutName ?? '');
     setWattageError(null);
     setSettingsControlId(controlId);
+  };
+
+  const saveShortcutNames = () => {
+    if (!settingsControl) return;
+    const onShortcutName = onShortcutInput.trim();
+    const offShortcutName = offShortcutInput.trim();
+    setData((current) => ({
+      ...current,
+      controls: current.controls.map((control) =>
+        control.id === settingsControl.id
+          ? {
+              ...control,
+              onShortcutName: onShortcutName || undefined,
+              offShortcutName: offShortcutName || undefined,
+            }
+          : control,
+      ),
+    }));
+    Keyboard.dismiss();
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const saveControlWattage = () => {
@@ -1109,10 +1133,66 @@ export default function HomeScreen() {
               </View>
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
-                  Shortcut launching is disabled
+                  ON Shortcut name
                 </Text>
+                <TextInput
+                  value={onShortcutInput}
+                  onChangeText={setOnShortcutInput}
+                  maxLength={100}
+                  returnKeyType="done"
+                  onSubmitEditing={saveShortcutNames}
+                  placeholder="Exact ON Shortcut name"
+                  placeholderTextColor={colors.mutedForeground}
+                  accessibilityLabel="ON Shortcut name"
+                  testID="on-shortcut-name-input"
+                  style={[
+                    styles.textInput,
+                    {
+                      backgroundColor: colors.background,
+                      borderColor: colors.border,
+                      color: colors.foreground,
+                    },
+                  ]}
+                />
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  OFF Shortcut name
+                </Text>
+                <TextInput
+                  value={offShortcutInput}
+                  onChangeText={setOffShortcutInput}
+                  maxLength={100}
+                  returnKeyType="done"
+                  onSubmitEditing={saveShortcutNames}
+                  placeholder="Exact OFF Shortcut name"
+                  placeholderTextColor={colors.mutedForeground}
+                  accessibilityLabel="OFF Shortcut name"
+                  testID="off-shortcut-name-input"
+                  style={[
+                    styles.textInput,
+                    {
+                      backgroundColor: colors.background,
+                      borderColor: colors.border,
+                      color: colors.foreground,
+                    },
+                  ]}
+                />
+                <Pressable
+                  onPress={saveShortcutNames}
+                  accessibilityRole="button"
+                  accessibilityLabel="Save ON and OFF Shortcut names"
+                  testID="save-shortcut-names-button"
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    { backgroundColor: colors.primary },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.submitText, { color: colors.primaryForeground }]}>
+                    Save names
+                  </Text>
+                </Pressable>
                 <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                  iOS opens the Shortcuts app when another app runs an existing Shortcut. These tiles stay inactive until native Tuya controls are built.
+                  Saved locally only. Shortcut launching is disabled, so tiles remain inactive.
                 </Text>
               </View>
               <View style={styles.wattageField}>
