@@ -677,7 +677,7 @@ export default function HomeScreen() {
         />
         <Text style={[styles.noticeText, { color: colors.secondaryForeground }]}>
           {connectionQuery.data?.connected
-            ? 'Your Tuya account is connected. Add a linked device to a room to control it here.'
+            ? 'Pair devices in Smart Life first. Then add them to a room here to control them through Tuya Cloud.'
             : connectionQuery.data?.message ??
               'Tuya is not connected yet. Check the project setup and region.'}
         </Text>
@@ -1068,7 +1068,7 @@ export default function HomeScreen() {
                 <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
                   {dialog === 'room'
                     ? 'Give this part of your home a name.'
-                    : 'Choose a device from your linked Tuya account.'}
+                    : 'Pair devices in Smart Life first, then refresh this list.'}
                 </Text>
               </View>
               <Pressable
@@ -1237,16 +1237,34 @@ export default function HomeScreen() {
                       </Pressable>
                     </View>
                   ) : availableDevices.length === 0 ? (
-                    <Text
-                      style={[
-                        styles.devicePickerMessageText,
-                        { color: colors.mutedForeground },
-                      ]}
-                    >
-                      {(devicesQuery.data?.devices.length ?? 0) > 0
-                        ? 'All linked Tuya devices are already assigned to rooms.'
-                        : 'No devices were found in the linked Tuya account.'}
-                    </Text>
+                    <View style={styles.devicePickerMessage}>
+                      <Text
+                        style={[
+                          styles.devicePickerMessageText,
+                          { color: colors.mutedForeground },
+                        ]}
+                      >
+                        {(devicesQuery.data?.devices.length ?? 0) > 0
+                          ? 'All linked Tuya devices are already assigned to rooms.'
+                          : 'No devices found. Pair one in Smart Life, then refresh this list.'}
+                      </Text>
+                      {(devicesQuery.data?.devices.length ?? 0) === 0 && (
+                        <Pressable
+                          onPress={() => void devicesQuery.refetch()}
+                          testID="refresh-tuya-devices-button"
+                          style={{ paddingVertical: 8 }}
+                        >
+                          <Text
+                            style={[
+                              styles.devicePickerMessageText,
+                              { color: colors.primary, fontWeight: '700' },
+                            ]}
+                          >
+                            Refresh devices
+                          </Text>
+                        </Pressable>
+                      )}
+                    </View>
                   ) : (
                     <ScrollView
                       style={styles.devicePickerList}

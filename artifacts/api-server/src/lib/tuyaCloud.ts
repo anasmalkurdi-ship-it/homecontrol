@@ -387,6 +387,8 @@ export async function checkTuyaConnection() {
         message:
           error.code === "TUYA_CONFIGURATION_MISSING"
             ? "Tuya setup is incomplete."
+            : error.code === "1106"
+              ? "Tuya denied device access (1106). Check that the Smart Life account is linked to this same Cloud project and that the project has access to the required device APIs."
             : error.message,
       };
     }
