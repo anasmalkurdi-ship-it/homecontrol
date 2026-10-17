@@ -8,5 +8,5 @@
 
 export interface TuyaStatusPoint {
   code: string;
-  value: boolean;
+  value: unknown;
 }

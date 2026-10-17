@@ -119,7 +119,7 @@ components:
         code:
           type: string
         value:
-          type: boolean
+          {}
       required: [code, value]
     TuyaDevice:
       type: object

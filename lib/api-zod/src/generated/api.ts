@@ -39,7 +39,7 @@ export const GetTuyaDevicesResponse = zod.object({
   "online": zod.boolean(),
   "status": zod.array(zod.object({
   "code": zod.string(),
-  "value": zod.boolean()
+  "value": zod.unknown()
 }))
 }))
 })
@@ -63,7 +63,7 @@ export const GetTuyaDeviceControlsResponse = zod.object({
 })),
   "status": zod.array(zod.object({
   "code": zod.string(),
-  "value": zod.boolean()
+  "value": zod.unknown()
 }))
 })
 
