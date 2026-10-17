@@ -8,6 +8,7 @@ import {
   Alert,
   Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -41,6 +42,7 @@ type HomeControl = {
   name: string;
   kind: DeviceKind;
   wattage?: number;
+  shortcutName?: string;
 };
 
 type HomeData = {
@@ -135,7 +137,9 @@ function parseHomeData(raw: string | null): HomeData {
           (control.wattage === undefined ||
             (typeof control.wattage === 'number' &&
               Number.isFinite(control.wattage) &&
-              control.wattage >= 0)),
+              control.wattage >= 0)) &&
+          (control.shortcutName === undefined ||
+            typeof control.shortcutName === 'string'),
       )
         .map((control) => ({
           id: control.id,
@@ -144,6 +148,10 @@ function parseHomeData(raw: string | null): HomeData {
           kind: control.kind,
           ...(typeof control.wattage === 'number'
             ? { wattage: control.wattage }
+            : {}),
+          ...(typeof control.shortcutName === 'string' &&
+          control.shortcutName.trim()
+            ? { shortcutName: control.shortcutName.trim() }
             : {}),
         }))
     : [];
@@ -158,9 +166,11 @@ function parseHomeData(raw: string | null): HomeData {
 
 function UnpairedControlCard({
   control,
+  onPress,
   onOpenSettings,
 }: {
   control: HomeControl;
+  onPress: () => void;
   onOpenSettings: () => void;
 }) {
   const colors = useColors();
@@ -177,16 +187,31 @@ function UnpairedControlCard({
       onPressIn={() => {
         longPressTriggered.current = false;
       }}
+      onPress={() => {
+        if (longPressTriggered.current) {
+          longPressTriggered.current = false;
+          return;
+        }
+        onPress();
+      }}
       onLongPress={openSettings}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === 'longpress') openSettings();
       }}
       delayLongPress={500}
       accessibilityRole="button"
-      accessibilityLabel={`${control.name}, not paired`}
-      accessibilityHint="Device control is unavailable in this build. Press and hold for device settings."
+      accessibilityLabel={
+        control.shortcutName
+          ? `${control.name}, runs Shortcut ${control.shortcutName}`
+          : `${control.name}, no Shortcut assigned`
+      }
+      accessibilityHint={
+        control.shortcutName
+          ? 'Tap to run the assigned iPhone Shortcut. Press and hold for settings.'
+          : 'Press and hold to assign an iPhone Shortcut.'
+      }
       accessibilityActions={[{ name: 'longpress', label: 'Open device settings' }]}
-      testID={`unpaired-control-${control.id}`}
+      testID={`control-tile-${control.id}`}
       style={({ pressed }) => [
         styles.controlCard,
         {
@@ -223,7 +248,9 @@ function UnpairedControlCard({
             ]}
           />
           <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-            Not paired in this build
+            {control.shortcutName
+              ? `Shortcut · ${control.shortcutName}`
+              : 'Hold to assign a Shortcut'}
           </Text>
         </View>
       </View>
@@ -239,7 +266,7 @@ function UnpairedControlCard({
             { color: colors.mutedForeground },
           ]}
         >
-          Not paired
+          {control.shortcutName ? 'Shortcut' : 'Setup'}
         </Text>
       </View>
     </Pressable>
@@ -257,6 +284,7 @@ export default function HomeScreen() {
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
   const [wattageInput, setWattageInput] = useState('');
   const [wattageError, setWattageError] = useState<string | null>(null);
+  const [shortcutInput, setShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
@@ -341,8 +369,60 @@ export default function HomeScreen() {
     setWattageInput(
       typeof control?.wattage === 'number' ? String(control.wattage) : '',
     );
+    setShortcutInput(control?.shortcutName ?? '');
     setWattageError(null);
     setSettingsControlId(controlId);
+  };
+
+  const runControlShortcut = (control: HomeControl) => {
+    const shortcutName = control.shortcutName?.trim();
+    if (!shortcutName) {
+      Alert.alert(
+        'No Shortcut assigned',
+        'Add the exact name of an existing iPhone Shortcut in device settings.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Settings',
+            onPress: () => openControlSettings(control.id),
+          },
+        ],
+      );
+      return;
+    }
+    if (Platform.OS !== 'ios') {
+      Alert.alert(
+        'iPhone only',
+        'This tile can run Apple Shortcuts on an iPhone.',
+      );
+      return;
+    }
+
+    const shortcutUrl = `shortcuts://run-shortcut?name=${encodeURIComponent(shortcutName)}`;
+    void Linking.openURL(shortcutUrl).catch(() => {
+      Alert.alert(
+        'Shortcut not found',
+        `Make sure “${shortcutName}” exists in the Shortcuts app on this iPhone.`,
+      );
+    });
+  };
+
+  const saveControlShortcut = () => {
+    if (!settingsControl) return;
+    const shortcutName = shortcutInput.trim();
+    setData((current) => ({
+      ...current,
+      controls: current.controls.map((control) =>
+        control.id === settingsControl.id
+          ? {
+              ...control,
+              shortcutName: shortcutName || undefined,
+            }
+          : control,
+      ),
+    }));
+    Keyboard.dismiss();
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const saveControlWattage = () => {
@@ -660,6 +740,7 @@ export default function HomeScreen() {
                     <UnpairedControlCard
                       key={control.id}
                       control={control}
+                      onPress={() => runControlShortcut(control)}
                       onOpenSettings={() => openControlSettings(control.id)}
                     />
                   ))
@@ -1052,9 +1133,56 @@ export default function HomeScreen() {
                       ?.label ?? 'Device'}
                   </Text>
                   <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    Direct control is unavailable until the Tuya native pairing app is built.
+                    Tap this tile to run its assigned iPhone Shortcut.
                   </Text>
                 </View>
+              </View>
+              <View style={styles.wattageField}>
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  iPhone Shortcut
+                </Text>
+                <View style={styles.wattageInputRow}>
+                  <TextInput
+                    value={shortcutInput}
+                    onChangeText={setShortcutInput}
+                    maxLength={100}
+                    returnKeyType="done"
+                    onSubmitEditing={saveControlShortcut}
+                    placeholder="Exact Shortcut name"
+                    placeholderTextColor={colors.mutedForeground}
+                    accessibilityLabel="iPhone Shortcut name"
+                    testID="shortcut-name-input"
+                    style={[
+                      styles.textInput,
+                      styles.wattageInput,
+                      {
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                        color: colors.foreground,
+                      },
+                    ]}
+                  />
+                  <Pressable
+                    onPress={saveControlShortcut}
+                    accessibilityRole="button"
+                    accessibilityLabel="Save Shortcut name"
+                    testID="save-shortcut-name-button"
+                    style={({ pressed }) => [
+                      styles.wattageSaveButton,
+                      { backgroundColor: colors.primary },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="check"
+                      size={20}
+                      color={colors.primaryForeground}
+                    />
+                  </Pressable>
+                </View>
+                <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                  Enter the exact name of a Shortcut on this iPhone. Leave blank and save to unlink it.
+                </Text>
               </View>
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
