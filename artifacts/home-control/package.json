@@ -5,7 +5,11 @@
   "main": "expo-router/entry",
   "expo": {
     "autolinking": {
-      "searchPaths": ["./modules", "./node_modules", "../../node_modules"]
+      "searchPaths": [
+        "./modules",
+        "./node_modules",
+        "../../node_modules"
+      ]
     }
   },
   "scripts": {
@@ -62,6 +66,7 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "@expo/config-plugins": "57.0.10",
     "expo": "~57.0.29",
     "expo-auth-session": "~57.0.16",
     "expo-crypto": "~57.0.4",
