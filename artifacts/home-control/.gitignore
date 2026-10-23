@@ -12,6 +12,11 @@ expo-env.d.ts
 # Native
 ios/
 android/
+# Keep the custom Expo module's source; only generated app-native folders are ignored.
+!modules/
+!modules/tuya-smart-home/
+!modules/tuya-smart-home/ios/
+!modules/tuya-smart-home/ios/**
 *.orig.*
 *.jks
 *.p8
