@@ -131,6 +131,17 @@ const deviceKinds: {
   },
 ];
 
+const deviceIconOptions: {
+  key: string;
+  label: string;
+  icon: DeviceIcon;
+}[] = [
+  ...deviceKinds,
+  { key: 'spot-lights', label: 'Spot lights', icon: 'light-recessed' },
+  { key: 'led-rope-light', label: 'LED rope light', icon: 'led-strip' },
+  { key: 'mirror', label: 'Mirror', icon: 'mirror' },
+];
+
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -1875,7 +1886,7 @@ export default function HomeScreen() {
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={styles.iconPickerOptions}
                 >
-                  {deviceKinds.map((kind) => {
+                  {deviceIconOptions.map((kind) => {
                     const selected = settingsControlIcon === kind.icon;
                     return (
                       <Pressable
