@@ -692,13 +692,28 @@ export default function HomeScreen() {
       },
     );
 
-    for (const { deviceId, homeId } of tuyaDevices.values()) {
-      void TuyaSmartHome.observeDevice(deviceId, homeId)
-        .then((snapshot) => {
+    const devicesToObserve = Array.from(tuyaDevices.values());
+    let nextDeviceIndex = 0;
+    const observeNextDevice = async () => {
+      while (mounted) {
+        const device = devicesToObserve[nextDeviceIndex];
+        nextDeviceIndex += 1;
+        if (!device) return;
+        try {
+          const snapshot = await TuyaSmartHome.observeDevice(
+            device.deviceId,
+            device.homeId,
+          );
           if (mounted) applyTuyaSnapshot(snapshot);
-        })
-        .catch(() => undefined);
-    }
+        } catch {
+          // Keep loading other devices if one device cannot be observed.
+        }
+      }
+    };
+    void Promise.all([
+      observeNextDevice(),
+      observeNextDevice(),
+    ]);
 
     return () => {
       mounted = false;
