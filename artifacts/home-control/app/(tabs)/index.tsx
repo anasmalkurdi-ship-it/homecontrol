@@ -101,13 +101,13 @@ const deviceKinds: {
     key: 'bathroomLight',
     label: 'Bathroom light',
     defaultName: 'Bathroom light',
-    icon: 'vanity-light',
+    icon: 'toilet',
   },
   {
     key: 'fan',
     label: 'Fan',
     defaultName: 'Fan',
-    icon: 'ceiling-fan',
+    icon: 'fan',
   },
   {
     key: 'heater',
