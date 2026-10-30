@@ -14,6 +14,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -74,6 +75,10 @@ type HomeData = {
   rooms: Room[];
   controls: HomeControl[];
   activeRoomId: string | null;
+};
+type InchingConfig = {
+  enabled: boolean;
+  durationSeconds: number;
 };
 
 type DialogState = 'room' | 'control' | null;
