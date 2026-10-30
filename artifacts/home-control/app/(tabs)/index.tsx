@@ -45,12 +45,14 @@ type DeviceKind =
   | 'nightLight'
   | 'airConditioner';
 type DeviceIcon = keyof typeof MaterialCommunityIcons.glyphMap;
+type RoomIcon = 'home-outline' | 'bed' | 'grass' | 'laptop' | 'sofa';
 type ShortcutAction = 'on' | 'off';
 type ControlMethod = 'shortcut' | 'tuya-sdk';
 
 type Room = {
   id: string;
   name: string;
+  icon?: RoomIcon;
 };
 
 type HomeControl = {
@@ -85,7 +87,7 @@ type InchingConfig = {
   durationSeconds: number;
 };
 
-type DialogState = 'room' | 'control' | null;
+type DialogState = 'room' | 'room-settings' | 'control' | null;
 
 const STORAGE_KEY = 'home-control-local-preview-v1';
 const EMPTY_DATA: HomeData = { rooms: [], controls: [], activeRoomId: null };
@@ -152,6 +154,14 @@ const deviceIconOptions: {
   { key: 'door-sensor', label: 'Door sensor', icon: 'door-open' },
 ];
 
+const roomIconOptions: { icon: RoomIcon; label: string }[] = [
+  { icon: 'home-outline', label: 'Home' },
+  { icon: 'bed', label: 'Bedroom' },
+  { icon: 'grass', label: 'Garden' },
+  { icon: 'laptop', label: 'Office' },
+  { icon: 'sofa', label: 'Living room' },
+];
+
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -178,6 +188,10 @@ function isDeviceIcon(value: unknown): value is DeviceIcon {
   );
 }
 
+function isRoomIcon(value: unknown): value is RoomIcon {
+  return roomIconOptions.some((option) => option.icon === value);
+}
+
 function parseHomeData(raw: string | null): HomeData {
   if (!raw) return EMPTY_DATA;
   const parsed: unknown = JSON.parse(raw);
@@ -191,7 +205,10 @@ function parseHomeData(raw: string | null): HomeData {
           typeof room === 'object' &&
           typeof room.id === 'string' &&
           typeof room.name === 'string',
-      )
+      ).map((room) => ({
+        ...room,
+        icon: isRoomIcon(room.icon) ? room.icon : 'home-outline',
+      }))
     : [];
   const roomIds = new Set(rooms.map((room) => room.id));
   const controls = Array.isArray(value.controls)
@@ -686,6 +703,8 @@ export default function HomeScreen() {
   const [onShortcutInput, setOnShortcutInput] = useState('');
   const [offShortcutInput, setOffShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
+  const [roomIcon, setRoomIcon] = useState<RoomIcon>('home-outline');
+  const [roomSettingsId, setRoomSettingsId] = useState<string | null>(null);
   const [controlName, setControlName] = useState('');
   const [selectedKind, setSelectedKind] = useState<DeviceKind>('chandelier');
   const [tuyaPairingVisible, setTuyaPairingVisible] = useState(false);
@@ -889,7 +908,16 @@ export default function HomeScreen() {
   const unusedDeviceCount = data.controls.filter((control) => control.isUnused).length;
   const openRoomDialog = () => {
     setRoomName('');
+    setRoomIcon('home-outline');
+    setRoomSettingsId(null);
     setDialog('room');
+  };
+
+  const openRoomSettings = (room: Room) => {
+    setRoomName(room.name);
+    setRoomIcon(room.icon ?? 'home-outline');
+    setRoomSettingsId(room.id);
+    setDialog('room-settings');
   };
 
   const openControlDialog = () => {
@@ -901,13 +929,28 @@ export default function HomeScreen() {
   const addRoom = () => {
     const name = roomName.trim();
     if (!name) return;
-    const room = { id: createId(), name };
+    const room = { id: createId(), name, icon: roomIcon };
     setData((current) => ({
       ...current,
       rooms: [...current.rooms, room],
       activeRoomId: room.id,
     }));
     setShowUnusedDevices(false);
+    setDialog(null);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const saveRoomSettings = () => {
+    const name = roomName.trim();
+    if (!roomSettingsId || !name) return;
+    setData((current) => ({
+      ...current,
+      rooms: current.rooms.map((room) =>
+        room.id === roomSettingsId
+          ? { ...room, name, icon: roomIcon }
+          : room,
+      ),
+    }));
     setDialog(null);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
@@ -1596,8 +1639,10 @@ export default function HomeScreen() {
                 <Pressable
                   key={room.id}
                   onPress={() => selectRoom(room.id)}
+                  onLongPress={() => openRoomSettings(room)}
                   accessibilityRole="button"
                   accessibilityLabel={`${room.name}, active rated power ${roomActiveWattage} watts`}
+                  accessibilityHint="Press and hold to rename this room or change its icon."
                   accessibilityState={{ selected: active }}
                   testID={`room-${index}`}
                   style={({ pressed }) => [
@@ -1610,7 +1655,7 @@ export default function HomeScreen() {
                   ]}
                 >
                   <MaterialCommunityIcons
-                    name="home-outline"
+                    name={room.icon ?? 'home-outline'}
                     size={19}
                     color={active ? colors.primaryForeground : colors.mutedForeground}
                   />
@@ -1787,12 +1832,18 @@ export default function HomeScreen() {
             <View style={styles.sheetHeader}>
               <View>
                 <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
-                  {dialog === 'room' ? 'Add a room' : 'Add a device tile'}
+                  {dialog === 'room'
+                    ? 'Add a room'
+                    : dialog === 'room-settings'
+                      ? 'Room settings'
+                      : 'Add a device tile'}
                 </Text>
                 <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
                   {dialog === 'room'
                     ? 'Give this part of your home a name.'
-                    : 'Add a Shortcut tile or pair a Tuya device to this room.'}
+                    : dialog === 'room-settings'
+                      ? 'Change the room name and icon.'
+                      : 'Add a Shortcut tile or pair a Tuya device to this room.'}
                 </Text>
               </View>
               <Pressable
@@ -1812,18 +1863,22 @@ export default function HomeScreen() {
               </Pressable>
             </View>
 
-            {dialog === 'room' ? (
+            {dialog === 'room' || dialog === 'room-settings' ? (
               <>
                 <TextInput
                   value={roomName}
                   onChangeText={setRoomName}
                   placeholder="For example, Living room"
                   placeholderTextColor={colors.mutedForeground}
-                  autoFocus
+                  autoFocus={dialog === 'room'}
                   returnKeyType="done"
-                  onSubmitEditing={addRoom}
+                  onSubmitEditing={
+                    dialog === 'room' ? addRoom : saveRoomSettings
+                  }
                   accessibilityLabel="Room name"
-                  testID="room-name-input"
+                  testID={
+                    dialog === 'room' ? 'room-name-input' : 'edit-room-name-input'
+                  }
                   style={[
                     styles.textInput,
                     {
@@ -1833,10 +1888,76 @@ export default function HomeScreen() {
                     },
                   ]}
                 />
+                {dialog === 'room-settings' ? (
+                  <View style={styles.roomIconSection}>
+                    <Text
+                      style={[
+                        styles.roomIconHeading,
+                        { color: colors.mutedForeground },
+                      ]}
+                    >
+                      ROOM ICON
+                    </Text>
+                    <View style={styles.roomIconGrid}>
+                      {roomIconOptions.map((option) => {
+                        const selected = roomIcon === option.icon;
+                        return (
+                          <Pressable
+                            key={option.icon}
+                            onPress={() => setRoomIcon(option.icon)}
+                            accessibilityRole="radio"
+                            accessibilityLabel={`${option.label} room icon`}
+                            accessibilityState={{ selected }}
+                            testID={`room-icon-${option.icon}`}
+                            style={({ pressed }) => [
+                              styles.roomIconOption,
+                              {
+                                backgroundColor: selected
+                                  ? colors.primary
+                                  : colors.background,
+                                borderColor: selected
+                                  ? colors.primary
+                                  : colors.border,
+                              },
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            <MaterialCommunityIcons
+                              name={option.icon}
+                              size={21}
+                              color={
+                                selected
+                                  ? colors.primaryForeground
+                                  : colors.primary
+                              }
+                            />
+                            <Text
+                              numberOfLines={1}
+                              style={[
+                                styles.roomIconLabel,
+                                {
+                                  color: selected
+                                    ? colors.primaryForeground
+                                    : colors.foreground,
+                                },
+                              ]}
+                            >
+                              {option.label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  </View>
+                ) : null}
                 <Pressable
-                  onPress={addRoom}
+                  onPress={
+                    dialog === 'room' ? addRoom : saveRoomSettings
+                  }
                   disabled={!roomName.trim()}
-                  testID="save-room-button"
+                  testID={
+                    dialog === 'room' ? 'save-room-button' : 'save-room-settings-button'
+                  }
                   style={({ pressed }) => [
                     styles.submitButton,
                     {
@@ -1857,7 +1978,7 @@ export default function HomeScreen() {
                       },
                     ]}
                   >
-                    Create room
+                    {dialog === 'room' ? 'Create room' : 'Save changes'}
                   </Text>
                 </Pressable>
               </>
@@ -2325,6 +2446,11 @@ export default function HomeScreen() {
                                 pressed && styles.pressed,
                               ]}
                             >
+                              <MaterialCommunityIcons
+                                name={room.icon ?? 'home-outline'}
+                                size={18}
+                                color={colors.mutedForeground}
+                              />
                               <Text
                                 numberOfLines={1}
                                 style={[
@@ -2971,6 +3097,24 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
+  roomIconSection: { gap: 8 },
+  roomIconHeading: {
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1.1,
+  },
+  roomIconGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  roomIconOption: {
+    width: '18%',
+    minWidth: 54,
+    height: 62,
+    borderWidth: 1,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  roomIconLabel: { fontSize: 8, fontWeight: '600' },
   wattageField: { gap: 8 },
   wattageInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   wattageInput: { flex: 1 },
