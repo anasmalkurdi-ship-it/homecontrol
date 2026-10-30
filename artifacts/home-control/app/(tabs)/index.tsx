@@ -401,6 +401,19 @@ function getTuyaPowerState(control: HomeControl): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function isControlActive(control: HomeControl): boolean {
+  return (
+    !control.isUnused &&
+    (control.controlMethod === 'tuya-sdk'
+      ? getTuyaPowerState(control) === true
+      : control.lastShortcutAction === 'on')
+  );
+}
+
+function formatWattage(wattage: number): string {
+  return `${Number.isInteger(wattage) ? wattage : wattage.toFixed(1)} W`;
+}
+
 function UnpairedControlCard({
   control,
   onPress,
@@ -424,17 +437,10 @@ function UnpairedControlCard({
     : control.lastShortcutAction === 'on';
   const hasLastRequest = control.lastShortcutAction !== undefined;
   const orange = colors.deviceOn;
-  const stateLabel = isTuyaDevice
-    ? control.tuyaOnline === false
-      ? 'Device offline'
-      : tuyaReportedOn === undefined
-        ? 'Waiting for device state'
-        : `Device state · ${tuyaReportedOn ? 'ON' : 'OFF'}`
-    : hasLastRequest
-      ? `Last requested · ${control.lastShortcutAction?.toUpperCase()}`
-      : hasShortcutPair
-        ? 'Ready · first tap runs ON'
-        : 'Set up ON/OFF Shortcuts';
+  const wattageLabel =
+    control.wattage === undefined
+      ? 'Wattage not set'
+      : formatWattage(control.wattage);
   const longPressTriggered = useRef(false);
   const openSettings = () => {
     longPressTriggered.current = true;
@@ -523,7 +529,7 @@ function UnpairedControlCard({
               { color: lastRequestedOn ? orange : colors.mutedForeground },
             ]}
           >
-            {stateLabel}
+            {wattageLabel}
           </Text>
         </View>
       </View>
@@ -1086,13 +1092,7 @@ export default function HomeScreen() {
   const selectedDefinition = deviceKinds.find(
     (kind) => kind.key === selectedKind,
   );
-  const activeControls = data.controls.filter(
-    (control) =>
-      !control.isUnused &&
-      (control.controlMethod === 'tuya-sdk'
-        ? getTuyaPowerState(control) === true
-        : control.lastShortcutAction === 'on'),
-  );
+  const activeControls = data.controls.filter(isControlActive);
   const activeRatedWattage = activeControls.reduce(
     (total, control) => total + (control.wattage ?? 0),
     0,
@@ -1232,10 +1232,7 @@ export default function HomeScreen() {
           </Text>
         </View>
         <Text style={[styles.activeLoadValue, { color: colors.foreground }]}>
-          {Number.isInteger(activeRatedWattage)
-            ? activeRatedWattage
-            : activeRatedWattage.toFixed(1)}{' '}
-          W
+          {formatWattage(activeRatedWattage)}
         </Text>
         {activeRoom && !showUnusedDevices ? (
           <Pressable
@@ -1304,17 +1301,20 @@ export default function HomeScreen() {
           >
             {data.rooms.map((room, index) => {
               const active = room.id === data.activeRoomId;
-              const count = data.controls.filter(
-                (control) => control.roomId === room.id && !control.isUnused,
-              ).length;
+              const roomActiveWattage = data.controls.reduce(
+                (total, control) =>
+                  control.roomId === room.id && isControlActive(control)
+                    ? total + (control.wattage ?? 0)
+                    : total,
+                0,
+              );
+              const roomWattageLabel = formatWattage(roomActiveWattage);
               return (
                 <Pressable
                   key={room.id}
                   onPress={() => selectRoom(room.id)}
                   accessibilityRole="button"
-                  accessibilityLabel={`${room.name}, ${count} ${
-                    count === 1 ? 'control' : 'controls'
-                  }`}
+                  accessibilityLabel={`${room.name}, active rated power ${roomActiveWattage} watts`}
                   accessibilityState={{ selected: active }}
                   testID={`room-${index}`}
                   style={({ pressed }) => [
@@ -1356,7 +1356,7 @@ export default function HomeScreen() {
                         },
                       ]}
                     >
-                      {count} {count === 1 ? 'control' : 'controls'}
+                      {roomWattageLabel}
                     </Text>
                   </View>
                 </Pressable>
