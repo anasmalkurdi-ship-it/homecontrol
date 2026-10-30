@@ -26,3 +26,9 @@ For device control, synchronize the selected home's data before initializing `Th
 **Why:** Tuya's iOS SDK documentation explicitly requires home-detail synchronization before device initialization. This explained `E_TUYA_DEVICE` after the app restarted and could no longer rely on in-memory device objects.
 
 **How to apply:** Any native Tuya observe/control path must load home data before looking up a device, coalesce simultaneous refreshes for the same home, and surface home-refresh errors rather than silently treating them as device state.
+
+For the user's requested automations that run while Home Control is closed, use the SmartLife SDK's scene APIs to create Tuya-hosted rules. This is distinct from using Tuya Cloud API as a fallback for direct button/device control.
+
+**Why:** The user explicitly wants switch-triggered actions to run when the app is not open, which requires a rule hosted by Tuya rather than an app-local listener.
+
+**How to apply:** Build, list, and manage these automations through SmartLife SDK scenes; keep direct device controls on the native device SDK.

@@ -13,6 +13,7 @@ Pod::Spec.new do |s|
 
   s.dependency 'ExpoModulesCore'
   s.dependency 'ThingSmartHomeKit', '~> 7.8.0'
+  s.dependency 'ThingSmartSceneCoreKit', '5.23.3.2'
   s.dependency 'ThingSmartBusinessExtensionKit', '~> 7.8.0'
 
   s.source_files = '*.swift'

@@ -24,6 +24,10 @@ import {
 } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import {
+  AutomationModal,
+  type AutomationControl,
+} from '@/components/AutomationModal';
 import { TuyaPairingFlow } from '@/components/TuyaPairingFlow';
 import {
   TuyaSmartHome,
@@ -145,6 +149,7 @@ const deviceIconOptions: {
   { key: 'spot-lights', label: 'Spot lights', icon: 'light-recessed' },
   { key: 'led-rope-light', label: 'LED rope light', icon: 'led-strip' },
   { key: 'mirror', label: 'Mirror', icon: 'mirror' },
+  { key: 'door-sensor', label: 'Door sensor', icon: 'door-open' },
 ];
 
 function createId() {
@@ -667,6 +672,7 @@ export default function HomeScreen() {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
   const [roomPickerControlId, setRoomPickerControlId] = useState<string | null>(null);
+  const [automationsVisible, setAutomationsVisible] = useState(false);
   const [showUnusedDevices, setShowUnusedDevices] = useState(false);
   const [wattageInput, setWattageInput] = useState('');
   const [wattageError, setWattageError] = useState<string | null>(null);
@@ -702,6 +708,32 @@ export default function HomeScreen() {
         .sort()
         .join('|'),
     [data.controls],
+  );
+  const automationControls = useMemo<AutomationControl[]>(
+    () =>
+      data.controls.flatMap((control) => {
+        const switchDpId = getTuyaSwitchDpId(control);
+        if (
+          control.controlMethod !== 'tuya-sdk' ||
+          !control.tuyaDeviceId ||
+          !control.tuyaHomeId ||
+          !switchDpId
+        ) {
+          return [];
+        }
+
+        return [
+          {
+            id: control.id,
+            name: control.name,
+            roomName: data.rooms.find((room) => room.id === control.roomId)?.name,
+            tuyaDeviceId: control.tuyaDeviceId,
+            tuyaHomeId: control.tuyaHomeId,
+            tuyaSwitchDpId: switchDpId,
+          },
+        ];
+      }),
+    [data.controls, data.rooms],
   );
 
   const applyTuyaSnapshot = (snapshot: TuyaDeviceSnapshot) => {
@@ -1347,6 +1379,11 @@ export default function HomeScreen() {
         },
       ]}
     >
+      <AutomationModal
+        visible={automationsVisible}
+        controls={automationControls}
+        onClose={() => setAutomationsVisible(false)}
+      />
       <View style={styles.header}>
         <View style={styles.brandRow}>
           <View
@@ -1408,6 +1445,24 @@ export default function HomeScreen() {
               />
             </Pressable>
           ) : null}
+          <Pressable
+            onPress={() => setAutomationsVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Automations"
+            hitSlop={8}
+            testID="automations-header-button"
+            style={({ pressed }) => [
+              styles.signOutButton,
+              { backgroundColor: colors.secondary },
+              pressed && styles.pressed,
+            ]}
+          >
+            <MaterialCommunityIcons
+              name="robot-outline"
+              size={18}
+              color={colors.primary}
+            />
+          </Pressable>
           <Pressable
             onPress={leaveHome}
             accessibilityLabel="Sign out"

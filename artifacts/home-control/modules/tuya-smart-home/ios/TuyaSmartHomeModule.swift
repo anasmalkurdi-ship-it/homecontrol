@@ -1,6 +1,7 @@
 import ExpoModulesCore
 import ThingSmartActivatorKit
 import ThingSmartHomeKit
+import ThingSmartSceneCoreKit
 
 public final class TuyaSmartHomeModule: Module {
   private var sdkConfigured = false
@@ -223,6 +224,206 @@ public final class TuyaSmartHomeModule: Module {
         }, failure: { error in
           promise.reject("E_TUYA_CONTROL", error?.localizedDescription ?? "The command could not be sent.")
         })
+      }
+    }
+
+    AsyncFunction("listAutomations") { (homeId: String, promise: Promise) in
+      guard self.ensureConfigured(promise) else { return }
+      guard ThingSmartUser.sharedInstance().isLogin else {
+        promise.reject("E_TUYA_AUTH", "Sign in to your Tuya account first.")
+        return
+      }
+      guard let numericHomeId = Int64(homeId) else {
+        promise.reject("E_TUYA_HOME", "The selected Tuya home ID is invalid.")
+        return
+      }
+      guard let manager = ThingSmartSceneManager.sharedInstance() else {
+        promise.reject("E_TUYA_SCENE", "Tuya's automation service is unavailable.")
+        return
+      }
+
+      self.withLoadedHome(homeId: homeId) { home, error in
+        guard home != nil else {
+          promise.reject(
+            "E_TUYA_HOME",
+            error?.localizedDescription ?? "Tuya could not load this home's device list."
+          )
+          return
+        }
+
+        manager.getSceneList(withHomeId: numericHomeId) { scenes in
+          let automations = (scenes ?? []).compactMap { scene -> [String: Any]? in
+            let conditions =
+              (scene.conditions as? [ThingSmartSceneConditionModel]) ?? []
+            guard !conditions.isEmpty,
+                  let sceneId = scene.sceneId,
+                  !sceneId.isEmpty
+            else {
+              return nil
+            }
+
+            return [
+              "sceneId": sceneId,
+              "name": scene.name ?? "Automation",
+              "enabled": scene.enabled,
+            ]
+          }
+          promise.resolve(automations)
+        } failure: { error in
+          promise.reject(
+            "E_TUYA_SCENE",
+            error?.localizedDescription ?? "Unable to load Tuya automations."
+          )
+        }
+      }
+    }
+
+    AsyncFunction("createSwitchAutomation") {
+      (
+        homeId: String,
+        name: String,
+        triggerDeviceId: String,
+        triggerDpId: String,
+        targetDeviceId: String,
+        targetDpId: String,
+        promise: Promise
+      ) in
+      guard self.ensureConfigured(promise) else { return }
+      guard ThingSmartUser.sharedInstance().isLogin else {
+        promise.reject("E_TUYA_AUTH", "Sign in to your Tuya account first.")
+        return
+      }
+      guard let numericHomeId = Int64(homeId) else {
+        promise.reject("E_TUYA_HOME", "The selected Tuya home ID is invalid.")
+        return
+      }
+      guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !triggerDpId.isEmpty,
+            !targetDpId.isEmpty
+      else {
+        promise.reject("E_TUYA_SCENE", "Choose both switches before saving.")
+        return
+      }
+      guard triggerDeviceId != targetDeviceId else {
+        promise.reject(
+          "E_TUYA_SCENE",
+          "Tuya does not allow the same device to be both the trigger and the action."
+        )
+        return
+      }
+
+      self.withLoadedHome(homeId: homeId) { home, error in
+        guard home != nil else {
+          promise.reject(
+            "E_TUYA_HOME",
+            error?.localizedDescription ?? "Tuya could not load this home's device list."
+          )
+          return
+        }
+        guard let triggerDevice = self.device(for: triggerDeviceId),
+              let targetDevice = self.device(for: targetDeviceId),
+              let triggerModel = triggerDevice.deviceModel,
+              let targetModel = targetDevice.deviceModel
+        else {
+          promise.reject(
+            "E_TUYA_DEVICE",
+            "Tuya could not load one of the selected switches."
+          )
+          return
+        }
+        guard let manager = ThingSmartSceneManager.sharedInstance() else {
+          promise.reject("E_TUYA_SCENE", "Tuya's automation service is unavailable.")
+          return
+        }
+
+        manager.getCondicationDeviceDPList(withDevId: triggerDeviceId) { dpModels in
+          let triggerDp = (dpModels ?? []).first {
+            String($0.dpId) == triggerDpId || $0.entitySubId == triggerDpId
+          }
+          guard let triggerDp else {
+            promise.reject(
+              "E_TUYA_SCENE",
+              "Tuya does not expose the selected switch as an automation trigger."
+            )
+            return
+          }
+
+          let expression = ThingSmartSceneConditionExprBuilder.createBoolExpr(
+            withType: triggerDp.entitySubId ?? triggerDpId,
+            isTrue: true,
+            exprType: .device
+          )
+          let conditionResult = ThingSmartSceneConditionFactory.createDeviceCondition(
+            withDevice: triggerModel,
+            dpModel: triggerDp,
+            exprModel: expression
+          )
+          guard let condition = conditionResult as? ThingSmartSceneConditionModel else {
+            promise.reject(
+              "E_TUYA_SCENE",
+              "Tuya could not build a condition for the selected switch."
+            )
+            return
+          }
+
+          let action = ThingSmartSceneActionModel()
+          action.actionExecutor = "dpIssue"
+          action.entityId = targetDeviceId
+          action.entityName = targetModel.name ?? "Switch"
+          action.executorProperty = [targetDpId: true]
+
+          manager.getSmartSceneBackgroundCover(withsuccess: { covers in
+            guard let background = (covers as? [String])?.first,
+                  !background.isEmpty
+            else {
+              promise.reject(
+                "E_TUYA_SCENE",
+                "Tuya did not return a scene background image."
+              )
+              return
+            }
+
+            ThingSmartScene.addNewScene(
+              withName: name,
+              homeId: numericHomeId,
+              background: background,
+              showFirstPage: false,
+              conditionList: [condition],
+              actionList: [action],
+              matchType: ThingSmartConditionMatchAll,
+              success: { scene in
+                guard let sceneId = scene.sceneId, !sceneId.isEmpty else {
+                  promise.reject(
+                    "E_TUYA_SCENE",
+                    "Tuya created the automation but did not return its ID."
+                  )
+                  return
+                }
+                promise.resolve([
+                  "sceneId": sceneId,
+                  "name": scene.name ?? name,
+                  "enabled": true,
+                ])
+              },
+              failure: { error in
+                promise.reject(
+                  "E_TUYA_SCENE",
+                  error?.localizedDescription ?? "Unable to create the Tuya automation."
+                )
+              }
+            )
+          }, failure: { error in
+            promise.reject(
+              "E_TUYA_SCENE",
+              error?.localizedDescription ?? "Unable to load Tuya scene backgrounds."
+            )
+          })
+        } failure: { error in
+          promise.reject(
+            "E_TUYA_SCENE",
+            error?.localizedDescription ?? "Unable to load trigger options from Tuya."
+          )
+        }
       }
     }
   }

@@ -24,6 +24,12 @@ export type TuyaDeviceSnapshot = {
   schema: TuyaSchema[];
 };
 
+export type TuyaAutomation = {
+  sceneId: string;
+  name: string;
+  enabled: boolean;
+};
+
 export type TuyaPairingEvent = {
   status: 'requesting-token' | 'searching' | 'paired' | 'failed';
   message?: string;
@@ -73,6 +79,15 @@ type TuyaNativeModule = {
     homeId: string,
     dps: Record<string, boolean | number | string>,
   ): Promise<void>;
+  listAutomations(homeId: string): Promise<TuyaAutomation[]>;
+  createSwitchAutomation(
+    homeId: string,
+    name: string,
+    triggerDeviceId: string,
+    triggerDpId: string,
+    targetDeviceId: string,
+    targetDpId: string,
+  ): Promise<TuyaAutomation>;
 };
 
 const nativeModule =
@@ -118,6 +133,24 @@ export const TuyaSmartHome = {
     homeId: string,
     dps: Record<string, boolean | number | string>,
   ) => requireNative().publishDps(deviceId, homeId, dps),
+  listAutomations: (homeId: string) =>
+    requireNative().listAutomations(homeId),
+  createSwitchAutomation: (
+    homeId: string,
+    name: string,
+    triggerDeviceId: string,
+    triggerDpId: string,
+    targetDeviceId: string,
+    targetDpId: string,
+  ) =>
+    requireNative().createSwitchAutomation(
+      homeId,
+      name,
+      triggerDeviceId,
+      triggerDpId,
+      targetDeviceId,
+      targetDpId,
+    ),
   addListener: <K extends keyof TuyaNativeEvents>(
     eventName: K,
     listener: TuyaNativeEvents[K],
