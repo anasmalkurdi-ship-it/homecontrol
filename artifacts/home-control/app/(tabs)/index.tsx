@@ -34,6 +34,8 @@ import {
 type DeviceKind =
   | 'chandelier'
   | 'sideLight'
+  | 'bathroomLight'
+  | 'fan'
   | 'heater'
   | 'nightLight'
   | 'airConditioner';
@@ -58,10 +60,12 @@ type HomeControl = {
   controlMethod?: ControlMethod;
   tuyaDeviceId?: string;
   tuyaHomeId?: string;
+  tuyaSwitchDpId?: string;
   tuyaDps?: Record<string, unknown>;
   tuyaSchema?: TuyaSchema[];
   tuyaOnline?: boolean;
   nameCustomized?: boolean;
+  isUnused?: boolean;
 };
 
 type HomeData = {
@@ -94,6 +98,18 @@ const deviceKinds: {
     icon: 'spotlight-beam',
   },
   {
+    key: 'bathroomLight',
+    label: 'Bathroom light',
+    defaultName: 'Bathroom light',
+    icon: 'vanity-light',
+  },
+  {
+    key: 'fan',
+    label: 'Fan',
+    defaultName: 'Fan',
+    icon: 'ceiling-fan',
+  },
+  {
     key: 'heater',
     label: 'Water heater',
     defaultName: 'Water heater',
@@ -121,6 +137,8 @@ function isDeviceKind(value: unknown): value is DeviceKind {
   return (
     value === 'chandelier' ||
     value === 'sideLight' ||
+    value === 'bathroomLight' ||
+    value === 'fan' ||
     value === 'heater' ||
     value === 'nightLight' ||
     value === 'airConditioner'
@@ -173,6 +191,8 @@ function parseHomeData(raw: string | null): HomeData {
             typeof control.tuyaDeviceId === 'string') &&
           (control.tuyaHomeId === undefined ||
             typeof control.tuyaHomeId === 'string') &&
+          (control.tuyaSwitchDpId === undefined ||
+            typeof control.tuyaSwitchDpId === 'string') &&
           (control.tuyaDps === undefined ||
             (!!control.tuyaDps &&
               typeof control.tuyaDps === 'object' &&
@@ -190,7 +210,9 @@ function parseHomeData(raw: string | null): HomeData {
           (control.tuyaOnline === undefined ||
             typeof control.tuyaOnline === 'boolean') &&
           (control.nameCustomized === undefined ||
-            typeof control.nameCustomized === 'boolean'),
+            typeof control.nameCustomized === 'boolean') &&
+          (control.isUnused === undefined ||
+            typeof control.isUnused === 'boolean'),
       )
         .map((control) => {
           const onShortcutName =
@@ -225,6 +247,9 @@ function parseHomeData(raw: string | null): HomeData {
             ...(typeof control.tuyaHomeId === 'string'
               ? { tuyaHomeId: control.tuyaHomeId }
               : {}),
+            ...(typeof control.tuyaSwitchDpId === 'string'
+              ? { tuyaSwitchDpId: control.tuyaSwitchDpId }
+              : {}),
             ...(control.tuyaDps &&
             typeof control.tuyaDps === 'object' &&
             !Array.isArray(control.tuyaDps)
@@ -239,6 +264,9 @@ function parseHomeData(raw: string | null): HomeData {
             ...(typeof control.nameCustomized === 'boolean'
               ? { nameCustomized: control.nameCustomized }
               : {}),
+            ...(typeof control.isUnused === 'boolean'
+              ? { isUnused: control.isUnused }
+              : {}),
           };
         })
     : [];
@@ -248,26 +276,96 @@ function parseHomeData(raw: string | null): HomeData {
       ? value.activeRoomId
       : (rooms[0]?.id ?? null);
 
-  return { rooms, controls, activeRoomId };
+  return {
+    rooms,
+    controls: controls.flatMap(splitTuyaControlBySwitch),
+    activeRoomId,
+  };
 }
 
-function getTuyaSwitchDpId(control: HomeControl): string | null {
+function getTuyaSwitchDps(control: HomeControl): TuyaSchema[] {
   const dps = control.tuyaDps ?? {};
   const booleanSchema = (control.tuyaSchema ?? []).filter(
     (item) =>
       typeof dps[item.dpId] === 'boolean' &&
       item.mode.toLowerCase() !== 'ro',
   );
-  const preferred = booleanSchema.find((item) =>
+  const preferred = booleanSchema.filter((item) =>
     /switch|power|on_off|light/i.test(`${item.code} ${item.name}`),
   );
-  if (preferred) return preferred.dpId;
+  const candidates =
+    preferred.length > 0
+      ? preferred
+      : booleanSchema[0]
+        ? [booleanSchema[0]]
+        : (() => {
+            const dpsFallback = Object.entries(dps).find(
+              ([, value]) => typeof value === 'boolean',
+            );
+            return dpsFallback
+              ? [
+                  {
+                    dpId: dpsFallback[0],
+                    code: dpsFallback[0],
+                    name: 'Switch',
+                    mode: 'rw',
+                  },
+                ]
+              : [];
+          })();
 
-  const schemaFallback = booleanSchema[0];
-  if (schemaFallback) return schemaFallback.dpId;
+  if (control.tuyaSwitchDpId) {
+    const matched = candidates.find(
+      (schema) => schema.dpId === control.tuyaSwitchDpId,
+    );
+    if (matched) return [matched];
 
-  const dpsFallback = Object.entries(dps).find(([, value]) => typeof value === 'boolean');
-  return dpsFallback?.[0] ?? null;
+    const schema = (control.tuyaSchema ?? []).find(
+      (item) => item.dpId === control.tuyaSwitchDpId,
+    );
+    return schema
+      ? [schema]
+      : [
+          {
+            dpId: control.tuyaSwitchDpId,
+            code: control.tuyaSwitchDpId,
+            name: 'Switch',
+            mode: 'rw',
+          },
+        ];
+  }
+
+  return candidates;
+}
+
+function getTuyaSwitchDpId(control: HomeControl): string | null {
+  return getTuyaSwitchDps(control)[0]?.dpId ?? null;
+}
+
+function getTuyaSwitchLabel(schema: TuyaSchema, index: number): string {
+  const numberInCode = schema.code.match(/(\d+)$/)?.[1];
+  if (numberInCode) return `Switch ${numberInCode}`;
+  return schema.name.trim() || `Switch ${index + 1}`;
+}
+
+function splitTuyaControlBySwitch(control: HomeControl): HomeControl[] {
+  if (control.controlMethod !== 'tuya-sdk' || control.tuyaSwitchDpId) {
+    return [control];
+  }
+  const switches = getTuyaSwitchDps(control);
+  if (switches.length < 2) return [control];
+
+  return switches.map((schema, index) => ({
+    ...control,
+    id:
+      index === 0
+        ? control.id
+        : `${control.id}-gang-${schema.dpId}`,
+    name: `${control.name} — ${getTuyaSwitchLabel(schema, index)}`,
+    wattage: index === 0 ? control.wattage : undefined,
+    tuyaSwitchDpId: schema.dpId,
+    nameCustomized: true,
+  }));
 }
 
 function getTuyaPowerState(control: HomeControl): boolean | undefined {
@@ -283,7 +381,7 @@ function UnpairedControlCard({
   onOpenSettings,
 }: {
   control: HomeControl;
-  onPress: () => void;
+  onPress: (dpId?: string) => void;
   onOpenSettings: () => void;
 }) {
   const colors = useColors();
@@ -447,6 +545,8 @@ export default function HomeScreen() {
   const [storageError, setStorageError] = useState(false);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
+  const [roomPickerControlId, setRoomPickerControlId] = useState<string | null>(null);
+  const [showUnusedDevices, setShowUnusedDevices] = useState(false);
   const [wattageInput, setWattageInput] = useState('');
   const [wattageError, setWattageError] = useState<string | null>(null);
   const [deviceNameInput, setDeviceNameInput] = useState('');
@@ -460,12 +560,17 @@ export default function HomeScreen() {
 
   const tuyaControlSignature = useMemo(
     () =>
-      data.controls
+      [
+        ...new Set(
+          data.controls
         .filter(
           (control) =>
             control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
         )
-        .map((control) => `${control.id}:${control.tuyaDeviceId}`)
+            .map((control) => control.tuyaDeviceId!),
+        ),
+      ]
+        .sort()
         .join('|'),
     [data.controls],
   );
@@ -474,18 +579,22 @@ export default function HomeScreen() {
     if (!snapshot.deviceId) return;
     setData((current) => ({
       ...current,
-      controls: current.controls.map((control) =>
-        control.controlMethod === 'tuya-sdk' &&
-        control.tuyaDeviceId === snapshot.deviceId
-          ? {
-              ...control,
-              name: control.nameCustomized ? control.name : snapshot.name || control.name,
-              tuyaDps: snapshot.dps,
-              tuyaSchema: snapshot.schema,
-              tuyaOnline: snapshot.isOnline,
-            }
-          : control,
-      ),
+      controls: current.controls
+        .map((control) =>
+          control.controlMethod === 'tuya-sdk' &&
+          control.tuyaDeviceId === snapshot.deviceId
+            ? {
+                ...control,
+                name: control.nameCustomized
+                  ? control.name
+                  : snapshot.name || control.name,
+                tuyaDps: snapshot.dps,
+                tuyaSchema: snapshot.schema,
+                tuyaOnline: snapshot.isOnline,
+              }
+            : control,
+        )
+        .flatMap(splitTuyaControlBySwitch),
     }));
   };
 
@@ -524,10 +633,16 @@ export default function HomeScreen() {
     }
 
     let mounted = true;
-    const tuyaControls = data.controls.filter(
-      (control) =>
-        control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
-    );
+    const tuyaDeviceIds = [
+      ...new Set(
+        data.controls
+          .filter(
+            (control) =>
+              control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
+          )
+          .map((control) => control.tuyaDeviceId!),
+      ),
+    ];
     const deviceUpdates = TuyaSmartHome.addListener(
       'onDeviceUpdate',
       (snapshot) => {
@@ -535,9 +650,8 @@ export default function HomeScreen() {
       },
     );
 
-    for (const control of tuyaControls) {
-      if (!control.tuyaDeviceId) continue;
-      void TuyaSmartHome.observeDevice(control.tuyaDeviceId)
+    for (const deviceId of tuyaDeviceIds) {
+      void TuyaSmartHome.observeDevice(deviceId)
         .then((snapshot) => {
           if (mounted) applyTuyaSnapshot(snapshot);
         })
@@ -558,11 +672,19 @@ export default function HomeScreen() {
   );
   const settingsControl =
     data.controls.find((control) => control.id === settingsControlId) ?? null;
+  const roomPickerControl =
+    data.controls.find((control) => control.id === roomPickerControlId) ?? null;
   const roomControls = useMemo(
     () =>
-      data.controls.filter((control) => control.roomId === activeRoom?.id),
-    [activeRoom?.id, data.controls],
+      showUnusedDevices
+        ? data.controls.filter((control) => control.isUnused)
+        : data.controls.filter(
+            (control) =>
+              !control.isUnused && control.roomId === activeRoom?.id,
+          ),
+    [activeRoom?.id, data.controls, showUnusedDevices],
   );
+  const unusedDeviceCount = data.controls.filter((control) => control.isUnused).length;
   const openRoomDialog = () => {
     setRoomName('');
     setDialog('room');
@@ -583,6 +705,7 @@ export default function HomeScreen() {
       rooms: [...current.rooms, room],
       activeRoomId: room.id,
     }));
+    setShowUnusedDevices(false);
     setDialog(null);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
@@ -597,7 +720,7 @@ export default function HomeScreen() {
     };
     setData((current) => ({
       ...current,
-      controls: [...current.controls, control],
+      controls: [...current.controls, ...splitTuyaControlBySwitch(control)],
     }));
     setDialog(null);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -688,7 +811,7 @@ export default function HomeScreen() {
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
-  const runControlShortcut = (control: HomeControl) => {
+  const runControlShortcut = (control: HomeControl, requestedDpId?: string) => {
     if (control.controlMethod === 'tuya-sdk') {
       if (!control.tuyaDeviceId) {
         Alert.alert('Device link missing', 'Open device settings and pair this tile again.');
@@ -702,7 +825,7 @@ export default function HomeScreen() {
       void (async () => {
         try {
           let currentControl = control;
-          let dpId = getTuyaSwitchDpId(currentControl);
+          let dpId = requestedDpId ?? getTuyaSwitchDpId(currentControl);
           let currentValue =
             dpId && typeof currentControl.tuyaDps?.[dpId] === 'boolean'
               ? currentControl.tuyaDps[dpId]
@@ -717,7 +840,7 @@ export default function HomeScreen() {
               tuyaSchema: snapshot.schema,
               tuyaOnline: snapshot.isOnline,
             };
-            dpId = getTuyaSwitchDpId(currentControl);
+            dpId = requestedDpId ?? getTuyaSwitchDpId(currentControl);
             currentValue =
               dpId && typeof currentControl.tuyaDps?.[dpId] === 'boolean'
                 ? currentControl.tuyaDps[dpId]
@@ -832,8 +955,8 @@ export default function HomeScreen() {
 
   const removeControl = (controlId: string, name: string) => {
     Alert.alert(
-      'Remove from room?',
-      `Remove “${name}” from this room?`,
+      'Delete tile?',
+      `Remove “${name}” from Home Control? This will not remove the device from your Tuya account.`,
       [
       { text: 'Keep', style: 'cancel' },
       {
@@ -853,7 +976,42 @@ export default function HomeScreen() {
 
   const selectRoom = (roomId: string) => {
     setData((current) => ({ ...current, activeRoomId: roomId }));
+    setShowUnusedDevices(false);
     void Haptics.selectionAsync();
+  };
+
+  const assignControlToRoom = (roomId: string) => {
+    if (!roomPickerControl) return;
+    const controlId = roomPickerControl.id;
+    setData((current) => ({
+      ...current,
+      activeRoomId: roomId,
+      controls: current.controls.map((control) =>
+        control.id === controlId
+          ? { ...control, roomId, isUnused: false }
+          : control,
+      ),
+    }));
+    setShowUnusedDevices(false);
+    setRoomPickerControlId(null);
+    setSettingsControlId(null);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const toggleUnusedDevice = () => {
+    if (!settingsControl) return;
+    const control = settingsControl;
+    const hide = !control.isUnused;
+    setData((current) => ({
+      ...current,
+      activeRoomId: hide ? current.activeRoomId : control.roomId,
+      controls: current.controls.map((item) =>
+        item.id === control.id ? { ...item, isUnused: hide } : item,
+      ),
+    }));
+    setShowUnusedDevices(hide);
+    setSettingsControlId(null);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const leaveHome = () => {
@@ -863,10 +1021,12 @@ export default function HomeScreen() {
   const selectedDefinition = deviceKinds.find(
     (kind) => kind.key === selectedKind,
   );
-  const activeControls = data.controls.filter((control) =>
-    control.controlMethod === 'tuya-sdk'
-      ? getTuyaPowerState(control) === true
-      : control.lastShortcutAction === 'on',
+  const activeControls = data.controls.filter(
+    (control) =>
+      !control.isUnused &&
+      (control.controlMethod === 'tuya-sdk'
+        ? getTuyaPowerState(control) === true
+        : control.lastShortcutAction === 'on'),
   );
   const activeRatedWattage = activeControls.reduce(
     (total, control) => total + (control.wattage ?? 0),
@@ -1021,7 +1181,7 @@ export default function HomeScreen() {
             {data.rooms.map((room, index) => {
               const active = room.id === data.activeRoomId;
               const count = data.controls.filter(
-                (control) => control.roomId === room.id,
+                (control) => control.roomId === room.id && !control.isUnused,
               ).length;
               return (
                 <Pressable
@@ -1078,6 +1238,64 @@ export default function HomeScreen() {
                 </Pressable>
               );
             })}
+            <Pressable
+              onPress={() => setShowUnusedDevices(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Unused devices, ${unusedDeviceCount} ${
+                unusedDeviceCount === 1 ? 'device' : 'devices'
+              }`}
+              accessibilityState={{ selected: showUnusedDevices }}
+              testID="unused-devices-view-button"
+              style={({ pressed }) => [
+                styles.roomItem,
+                {
+                  backgroundColor: showUnusedDevices
+                    ? colors.primary
+                    : 'transparent',
+                  borderColor: showUnusedDevices
+                    ? colors.primary
+                    : 'transparent',
+                },
+                pressed && styles.pressed,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name="archive-outline"
+                size={19}
+                color={
+                  showUnusedDevices
+                    ? colors.primaryForeground
+                    : colors.mutedForeground
+                }
+              />
+              <View style={styles.roomText}>
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.roomName,
+                    {
+                      color: showUnusedDevices
+                        ? colors.primaryForeground
+                        : colors.foreground,
+                    },
+                  ]}
+                >
+                  Unused devices
+                </Text>
+                <Text
+                  style={[
+                    styles.roomCount,
+                    {
+                      color: showUnusedDevices
+                        ? colors.primaryForeground + 'B8'
+                        : colors.mutedForeground,
+                    },
+                  ]}
+                >
+                  {unusedDeviceCount} {unusedDeviceCount === 1 ? 'device' : 'devices'}
+                </Text>
+              </View>
+            </Pressable>
             {data.rooms.length === 0 && (
               <Text style={[styles.railHint, { color: colors.mutedForeground }]}>
                 Add your first room
@@ -1087,44 +1305,48 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.roomContent}>
-          {activeRoom ? (
+          {activeRoom || showUnusedDevices ? (
             <>
               <View style={styles.roomHeader}>
                 <View style={styles.roomTitleBlock}>
                   <Text style={[styles.sectionEyebrow, { color: colors.mutedForeground }]}>
-                    ROOM
+                    {showUnusedDevices ? 'DEVICES' : 'ROOM'}
                   </Text>
                   <Text
                     numberOfLines={2}
                     style={[styles.roomTitle, { color: colors.foreground }]}
                   >
-                    {activeRoom.name}
+                    {showUnusedDevices ? 'Unused devices' : activeRoom?.name}
                   </Text>
                   <Text style={[styles.roomSubtitle, { color: colors.mutedForeground }]}>
                     {roomControls.length === 0
-                      ? 'No controls added yet'
+                      ? showUnusedDevices
+                        ? 'Hidden device tiles appear here'
+                        : 'No controls added yet'
                       : `${roomControls.length} ${roomControls.length === 1 ? 'control' : 'controls'}`}
                   </Text>
                 </View>
-                <Pressable
-                  onPress={openControlDialog}
-                  accessibilityLabel="Add device tile"
-                  testID="add-control-button"
-                  style={({ pressed }) => [
-                    styles.addControlButton,
-                    { backgroundColor: colors.primary },
-                    pressed && styles.pressed,
-                  ]}
-                >
-                  <MaterialCommunityIcons
-                    name="plus"
-                    size={20}
-                    color={colors.primaryForeground}
-                  />
-                  <Text style={[styles.addControlText, { color: colors.primaryForeground }]}>
-                    Add
-                  </Text>
-                </Pressable>
+                {!showUnusedDevices ? (
+                  <Pressable
+                    onPress={openControlDialog}
+                    accessibilityLabel="Add device tile"
+                    testID="add-control-button"
+                    style={({ pressed }) => [
+                      styles.addControlButton,
+                      { backgroundColor: colors.primary },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <MaterialCommunityIcons
+                      name="plus"
+                      size={20}
+                      color={colors.primaryForeground}
+                    />
+                    <Text style={[styles.addControlText, { color: colors.primaryForeground }]}>
+                      Add
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
 
               <ScrollView
@@ -1137,7 +1359,7 @@ export default function HomeScreen() {
                     <UnpairedControlCard
                       key={control.id}
                       control={control}
-                      onPress={() => runControlShortcut(control)}
+                      onPress={(dpId) => runControlShortcut(control, dpId)}
                       onOpenSettings={() => openControlSettings(control.id)}
                     />
                   ))
@@ -1161,29 +1383,33 @@ export default function HomeScreen() {
                       />
                     </View>
                     <Text style={[styles.emptyTitle, { color: colors.foreground }]}>
-                      Start this room
+                      {showUnusedDevices ? 'No unused devices' : 'Start this room'}
                     </Text>
                     <Text style={[styles.emptyBody, { color: colors.mutedForeground }]}>
-                      Add a chandelier, spot light, night light, water heater, or air conditioner tile to arrange your controls.
+                      {showUnusedDevices
+                        ? 'Tiles you hide from rooms will stay here so you can restore or move them later.'
+                        : 'Add a chandelier, spot light, bathroom light, fan, night light, water heater, or air conditioner tile to arrange your controls.'}
                     </Text>
-                    <Pressable
-                      onPress={openControlDialog}
-                      testID="empty-add-control-button"
-                      style={({ pressed }) => [
-                        styles.emptyAction,
-                        { backgroundColor: colors.primary },
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <MaterialCommunityIcons
-                        name="plus"
-                        size={18}
-                        color={colors.primaryForeground}
-                      />
-                      <Text style={[styles.emptyActionText, { color: colors.primaryForeground }]}>
-                        Add a device tile
-                      </Text>
-                    </Pressable>
+                    {!showUnusedDevices ? (
+                      <Pressable
+                        onPress={openControlDialog}
+                        testID="empty-add-control-button"
+                        style={({ pressed }) => [
+                          styles.emptyAction,
+                          { backgroundColor: colors.primary },
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name="plus"
+                          size={18}
+                          color={colors.primaryForeground}
+                        />
+                        <Text style={[styles.emptyActionText, { color: colors.primaryForeground }]}>
+                          Add a device tile
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
                 )}
               </ScrollView>
@@ -1620,6 +1846,67 @@ export default function HomeScreen() {
                   </Text>
                 </View>
               </View>
+              <View style={styles.wattageField}>
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  Room
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    if (settingsControl) {
+                      setRoomPickerControlId(settingsControl.id);
+                    }
+                  }}
+                  disabled={
+                    !settingsControl?.isUnused &&
+                    data.rooms.filter((room) => room.id !== settingsControl?.roomId)
+                      .length === 0
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    settingsControl?.isUnused
+                      ? 'Assign device to a room'
+                      : 'Move device to another room'
+                  }
+                  testID="move-control-to-room-button"
+                  style={({ pressed }) => [
+                    styles.settingsActionButton,
+                    {
+                      backgroundColor: colors.background,
+                      borderColor: colors.border,
+                    },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.settingsActionText, { color: colors.foreground }]}>
+                      {settingsControl?.isUnused
+                        ? 'Assign to a room'
+                        : 'Move to another room'}
+                    </Text>
+                    <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                      {settingsControl?.isUnused
+                        ? `Currently assigned to ${
+                            data.rooms.find(
+                              (room) => room.id === settingsControl.roomId,
+                            )?.name ?? 'a room'
+                          }`
+                        : data.rooms.find(
+                            (room) => room.id === settingsControl?.roomId,
+                          )?.name ?? ''}
+                    </Text>
+                  </View>
+                  <MaterialCommunityIcons
+                    name="chevron-right"
+                    size={20}
+                    color={colors.mutedForeground}
+                  />
+                </Pressable>
+                {!settingsControl?.isUnused && data.rooms.length < 2 ? (
+                  <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                    Add another room before moving this device.
+                  </Text>
+                ) : null}
+              </View>
               {settingsControl?.controlMethod === 'tuya-sdk' ? (
                 <View style={styles.wattageField}>
                   <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
@@ -1756,6 +2043,40 @@ export default function HomeScreen() {
                 )}
               </View>
               <Pressable
+                onPress={toggleUnusedDevice}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  settingsControl?.isUnused
+                    ? `Return ${settingsControl.name} to its room`
+                    : `Hide ${settingsControl?.name ?? 'device'} as unused`
+                }
+                accessibilityHint={
+                  settingsControl?.isUnused
+                    ? 'This device tile will appear in its assigned room again.'
+                    : 'This hides the tile from its room but keeps it in Unused devices.'
+                }
+                testID="toggle-unused-device-button"
+                style={({ pressed }) => [
+                  styles.settingsActionButton,
+                  {
+                    backgroundColor: colors.background,
+                    borderColor: colors.primary,
+                  },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={settingsControl?.isUnused ? 'eye-outline' : 'eye-off-outline'}
+                  size={19}
+                  color={colors.primary}
+                />
+                <Text style={[styles.settingsActionText, { color: colors.primary }]}>
+                  {settingsControl?.isUnused
+                    ? 'Return to room'
+                    : 'Hide as unused device'}
+                </Text>
+              </Pressable>
+              <Pressable
                 onPress={() => {
                   if (!settingsControl) return;
                   const control = settingsControl;
@@ -1764,7 +2085,7 @@ export default function HomeScreen() {
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={`Remove ${settingsControl?.name ?? 'device'} from this room`}
-                accessibilityHint="This removes only the room tile. It does not affect a paired device."
+                accessibilityHint="This permanently removes the Home Control tile, but not the paired device."
                 testID="remove-control-from-settings-button"
                 style={({ pressed }) => [
                   styles.settingsRemoveButton,
@@ -1778,11 +2099,114 @@ export default function HomeScreen() {
                   color={colors.destructive}
                 />
                 <Text style={[styles.settingsRemoveText, { color: colors.destructive }]}>
-                  Remove from room
+                  Delete tile
                 </Text>
               </Pressable>
             </View>
           </KeyboardControllerAvoidingView>
+        </View>
+      </Modal>
+      <Modal
+        visible={roomPickerControl !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setRoomPickerControlId(null)}
+      >
+        <View style={styles.modalRoot}>
+          <Pressable
+            style={styles.modalScrim}
+            onPress={() => setRoomPickerControlId(null)}
+            accessibilityLabel="Close room picker"
+          />
+          <View
+            style={[
+              styles.sheet,
+              styles.roomPickerSheet,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                paddingBottom: Math.max(insets.bottom, 18) + 12,
+              },
+            ]}
+          >
+            <View style={styles.sheetHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
+                  Choose a room
+                </Text>
+                <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
+                  {roomPickerControl?.isUnused
+                    ? `Assign ${roomPickerControl.name} to a room.`
+                    : `Move ${roomPickerControl?.name ?? 'this device'} to another room.`}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setRoomPickerControlId(null)}
+                accessibilityRole="button"
+                accessibilityLabel="Close room picker"
+                style={({ pressed }) => [
+                  styles.smallIconButton,
+                  { backgroundColor: colors.secondary, borderColor: colors.border },
+                  pressed && styles.pressed,
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name="close"
+                  size={18}
+                  color={colors.foreground}
+                />
+              </Pressable>
+            </View>
+            <ScrollView
+              style={styles.roomPickerList}
+              contentContainerStyle={styles.roomPickerOptions}
+              showsVerticalScrollIndicator={false}
+            >
+              {data.rooms.map((room) => {
+                const isCurrentRoom = room.id === roomPickerControl?.roomId;
+                const isDisabled = isCurrentRoom && !roomPickerControl?.isUnused;
+                return (
+                  <Pressable
+                    key={room.id}
+                    onPress={() => assignControlToRoom(room.id)}
+                    disabled={isDisabled}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${room.name}${
+                      isCurrentRoom
+                        ? roomPickerControl?.isUnused
+                          ? ', restore here'
+                          : ', current room'
+                        : ', move here'
+                    }`}
+                    testID={`assign-control-room-${room.id}`}
+                    style={({ pressed }) => [
+                      styles.roomPickerOption,
+                      {
+                        backgroundColor: colors.background,
+                        borderColor: colors.border,
+                        opacity: isDisabled ? 0.6 : 1,
+                      },
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={[styles.deviceName, { color: colors.foreground, flex: 1 }]}
+                    >
+                      {room.name}
+                    </Text>
+                    <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                      {isCurrentRoom
+                        ? roomPickerControl?.isUnused
+                          ? 'Restore here'
+                          : 'Current room'
+                        : 'Move here'}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
         </View>
       </Modal>
       <TuyaPairingFlow
@@ -2020,6 +2444,30 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+  },
+  settingsActionButton: {
+    minHeight: 52,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  settingsActionText: { fontSize: 12, fontWeight: '700' },
+  roomPickerSheet: { maxHeight: '78%' },
+  roomPickerList: { maxHeight: 360 },
+  roomPickerOptions: { gap: 8, paddingBottom: 4 },
+  roomPickerOption: {
+    minHeight: 50,
+    borderWidth: 1,
+    borderRadius: 13,
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
   },
   wattageField: { gap: 8 },
   wattageInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
