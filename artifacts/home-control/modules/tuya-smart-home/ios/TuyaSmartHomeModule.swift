@@ -5,6 +5,8 @@ import ThingSmartHomeKit
 public final class TuyaSmartHomeModule: Module {
   private var sdkConfigured = false
   private var observedDevices: [String: ThingSmartDevice] = [:]
+  private var loadedHomes: [String: ThingSmartHome] = [:]
+  private var pendingHomeLoads: [String: [(ThingSmartHome?, Error?) -> Void]] = [:]
   private lazy var delegateProxy = TuyaSmartHomeDelegateProxy(module: self)
 
   public func definition() -> ModuleDefinition {
@@ -172,31 +174,56 @@ public final class TuyaSmartHomeModule: Module {
       self.stopPairing()
     }
 
-    AsyncFunction("observeDevice") { (deviceId: String, promise: Promise) in
+    AsyncFunction("observeDevice") {
+      (deviceId: String, homeId: String, promise: Promise) in
       guard self.ensureConfigured(promise) else { return }
-      guard let device = ThingSmartDevice(deviceId: deviceId) else {
-        promise.reject("E_TUYA_DEVICE", "Tuya could not load that device.")
-        return
-      }
+      self.withLoadedHome(homeId: homeId) { home, error in
+        guard home != nil else {
+          promise.reject(
+            "E_TUYA_HOME",
+            error?.localizedDescription ?? "Tuya could not load this home's device list."
+          )
+          return
+        }
+        guard let device = self.device(for: deviceId) else {
+          promise.reject(
+            "E_TUYA_DEVICE",
+            "Tuya could not find this device in the selected home. Check that it is still paired to this Tuya account."
+          )
+          return
+        }
 
-      device.delegate = delegateProxy
-      self.observedDevices[deviceId] = device
-      promise.resolve(self.devicePayload(device.deviceModel))
+        device.delegate = self.delegateProxy
+        self.observedDevices[deviceId] = device
+        promise.resolve(self.devicePayload(device.deviceModel))
+      }
     }
 
     AsyncFunction("publishDps") {
-      (deviceId: String, dps: [String: Any], promise: Promise) in
+      (deviceId: String, homeId: String, dps: [String: Any], promise: Promise) in
       guard self.ensureConfigured(promise) else { return }
-      guard let device = self.device(for: deviceId) else {
-        promise.reject("E_TUYA_DEVICE", "Tuya could not load that device.")
-        return
-      }
+      self.withLoadedHome(homeId: homeId) { home, error in
+        guard home != nil else {
+          promise.reject(
+            "E_TUYA_HOME",
+            error?.localizedDescription ?? "Tuya could not load this home's device list."
+          )
+          return
+        }
+        guard let device = self.device(for: deviceId) else {
+          promise.reject(
+            "E_TUYA_DEVICE",
+            "Tuya could not find this device in the selected home. Check that it is still paired to this Tuya account."
+          )
+          return
+        }
 
-      device.publishDps(dps, success: {
-        promise.resolve(nil)
-      }, failure: { error in
-        promise.reject("E_TUYA_CONTROL", error?.localizedDescription ?? "The command could not be sent.")
-      })
+        device.publishDps(dps, success: {
+          promise.resolve(nil)
+        }, failure: { error in
+          promise.reject("E_TUYA_CONTROL", error?.localizedDescription ?? "The command could not be sent.")
+        })
+      }
     }
   }
 
@@ -221,6 +248,69 @@ public final class TuyaSmartHomeModule: Module {
       return false
     }
     return true
+  }
+
+  private func withLoadedHome(
+    homeId: String,
+    completion: @escaping (ThingSmartHome?, Error?) -> Void
+  ) {
+    guard let numericHomeId = Int64(homeId) else {
+      completion(
+        nil,
+        NSError(
+          domain: "TuyaSmartHome",
+          code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "The saved Tuya home link is invalid."]
+        )
+      )
+      return
+    }
+
+    if let home = loadedHomes[homeId] {
+      completion(home, nil)
+      return
+    }
+
+    if pendingHomeLoads[homeId] != nil {
+      pendingHomeLoads[homeId, default: []].append(completion)
+      return
+    }
+
+    guard let home = ThingSmartHome(homeId: numericHomeId) else {
+      completion(
+        nil,
+        NSError(
+          domain: "TuyaSmartHome",
+          code: 2,
+          userInfo: [NSLocalizedDescriptionKey: "Tuya could not open the saved home."]
+        )
+      )
+      return
+    }
+
+    pendingHomeLoads[homeId] = [completion]
+    home.getDataWithSuccess({ [weak self] _ in
+      guard let self else { return }
+      self.loadedHomes[homeId] = home
+      self.finishHomeLoad(homeId: homeId, home: home, error: nil)
+    }, failure: { [weak self] error in
+      guard let self else { return }
+      let loadError = error ?? NSError(
+        domain: "TuyaSmartHome",
+        code: 3,
+        userInfo: [NSLocalizedDescriptionKey: "Tuya could not refresh this home's device list."]
+      )
+      self.finishHomeLoad(homeId: homeId, home: nil, error: loadError)
+    })
+  }
+
+  private func finishHomeLoad(
+    homeId: String,
+    home: ThingSmartHome?,
+    error: Error?
+  ) {
+    let completions = pendingHomeLoads.removeValue(forKey: homeId) ?? []
+    completions.forEach { $0(home, error) }
   }
 
   private func device(for deviceId: String) -> ThingSmartDevice? {
@@ -303,10 +393,6 @@ public final class TuyaSmartHomeModule: Module {
     }
 
     stopPairing()
-    if let device = ThingSmartDevice(deviceId: deviceId) {
-      device.delegate = delegateProxy
-      observedDevices[deviceId] = device
-    }
     sendEvent("onPairingEvent", [
       "status": "paired",
       "device": devicePayload(deviceModel),

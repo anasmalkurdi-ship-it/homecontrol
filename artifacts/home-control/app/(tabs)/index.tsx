@@ -589,11 +589,14 @@ export default function HomeScreen() {
       [
         ...new Set(
           data.controls
-        .filter(
-          (control) =>
-            control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
-        )
-            .map((control) => control.tuyaDeviceId!),
+            .filter(
+              (control) =>
+                control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
+            )
+            .map(
+              (control) =>
+                `${control.tuyaHomeId ?? ''}:${control.tuyaDeviceId!}`,
+            ),
         ),
       ]
         .sort()
@@ -659,16 +662,23 @@ export default function HomeScreen() {
     }
 
     let mounted = true;
-    const tuyaDeviceIds = [
-      ...new Set(
-        data.controls
-          .filter(
-            (control) =>
-              control.controlMethod === 'tuya-sdk' && control.tuyaDeviceId,
-          )
-          .map((control) => control.tuyaDeviceId!),
-      ),
-    ];
+    const tuyaDevices = new Map<
+      string,
+      { deviceId: string; homeId: string }
+    >();
+    for (const control of data.controls) {
+      if (
+        control.controlMethod === 'tuya-sdk' &&
+        control.tuyaDeviceId &&
+        control.tuyaHomeId
+      ) {
+        const key = `${control.tuyaHomeId}:${control.tuyaDeviceId}`;
+        tuyaDevices.set(key, {
+          deviceId: control.tuyaDeviceId,
+          homeId: control.tuyaHomeId,
+        });
+      }
+    }
     const deviceUpdates = TuyaSmartHome.addListener(
       'onDeviceUpdate',
       (snapshot) => {
@@ -676,8 +686,8 @@ export default function HomeScreen() {
       },
     );
 
-    for (const deviceId of tuyaDeviceIds) {
-      void TuyaSmartHome.observeDevice(deviceId)
+    for (const { deviceId, homeId } of tuyaDevices.values()) {
+      void TuyaSmartHome.observeDevice(deviceId, homeId)
         .then((snapshot) => {
           if (mounted) applyTuyaSnapshot(snapshot);
         })
@@ -864,6 +874,10 @@ export default function HomeScreen() {
         Alert.alert('Device link missing', 'Open device settings and pair this tile again.');
         return;
       }
+      if (!control.tuyaHomeId) {
+        Alert.alert('Home link missing', 'Open device settings and pair this tile again.');
+        return;
+      }
       if (control.tuyaOnline === false) {
         Alert.alert('Device offline', 'The Tuya device is currently offline.');
         return;
@@ -879,7 +893,10 @@ export default function HomeScreen() {
               : undefined;
 
           if (typeof currentValue !== 'boolean') {
-            const snapshot = await TuyaSmartHome.observeDevice(control.tuyaDeviceId!);
+            const snapshot = await TuyaSmartHome.observeDevice(
+              control.tuyaDeviceId!,
+              control.tuyaHomeId!,
+            );
             applyTuyaSnapshot(snapshot);
             currentControl = {
               ...currentControl,
@@ -902,9 +919,11 @@ export default function HomeScreen() {
             return;
           }
 
-          await TuyaSmartHome.publishDps(control.tuyaDeviceId!, {
-            [dpId]: !currentValue,
-          });
+          await TuyaSmartHome.publishDps(
+            control.tuyaDeviceId!,
+            control.tuyaHomeId!,
+            { [dpId]: !currentValue },
+          );
           void Haptics.selectionAsync();
         } catch (controlError) {
           Alert.alert(

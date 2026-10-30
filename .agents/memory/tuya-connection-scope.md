@@ -20,3 +20,9 @@ Tuya account systems are isolated between apps. Do not instruct users to sign in
 **Why:** Tuya's official Help Center confirms different apps have isolated account systems: https://support.tuya.com/en/help/_detail/K9hrdzaocxaoa . Incorrect UI guidance led to valid Smart Life credentials being rejected by the custom app.
 
 **How to apply:** Clearly distinguish the SDK-app account from both consumer Smart Life and the app's own primary sign-in. Keep existing devices untouched until account setup succeeds, then migrate only the agreed test device.
+
+For device control, synchronize the selected home's data before initializing `ThingSmartDevice` from a saved device ID. Pass each tile's persisted home ID into observe and control calls, fetch home details once per home, then construct/cache device objects. A direct `ThingSmartDevice(deviceId:)` lookup can return nil until the home device list is synchronized; this is distinct from a device merely being offline.
+
+**Why:** Tuya's iOS SDK documentation explicitly requires home-detail synchronization before device initialization. This explained `E_TUYA_DEVICE` after the app restarted and could no longer rely on in-memory device objects.
+
+**How to apply:** Any native Tuya observe/control path must load home data before looking up a device, coalesce simultaneous refreshes for the same home, and surface home-refresh errors rather than silently treating them as device state.

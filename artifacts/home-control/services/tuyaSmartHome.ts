@@ -67,8 +67,12 @@ type TuyaNativeModule = {
     mode: 'EZ' | 'AP',
   ): Promise<{ started: boolean }>;
   stopWifiPairing(): Promise<void>;
-  observeDevice(deviceId: string): Promise<TuyaDeviceSnapshot>;
-  publishDps(deviceId: string, dps: Record<string, boolean | number | string>): Promise<void>;
+  observeDevice(deviceId: string, homeId: string): Promise<TuyaDeviceSnapshot>;
+  publishDps(
+    deviceId: string,
+    homeId: string,
+    dps: Record<string, boolean | number | string>,
+  ): Promise<void>;
 };
 
 const nativeModule =
@@ -107,12 +111,13 @@ export const TuyaSmartHome = {
     mode: 'EZ' | 'AP',
   ) => requireNative().startWifiPairing(homeId, ssid, password, mode),
   stopWifiPairing: () => requireNative().stopWifiPairing(),
-  observeDevice: (deviceId: string) =>
-    requireNative().observeDevice(deviceId),
+  observeDevice: (deviceId: string, homeId: string) =>
+    requireNative().observeDevice(deviceId, homeId),
   publishDps: (
     deviceId: string,
+    homeId: string,
     dps: Record<string, boolean | number | string>,
-  ) => requireNative().publishDps(deviceId, dps),
+  ) => requireNative().publishDps(deviceId, homeId, dps),
   addListener: <K extends keyof TuyaNativeEvents>(
     eventName: K,
     listener: TuyaNativeEvents[K],
