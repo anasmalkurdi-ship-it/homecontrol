@@ -1,3 +1,4 @@
 - [Tuya connection direction](tuya-connection-scope.md) — native iPhone-only SDK migration; custom-app accounts are separate from consumer Smart Life.
+- [Tuya inching data points](tuya-inching-dp.md) — inching is optional and its Wi-Fi string payload must not be confused with Zigbee raw data.
 - [GitHub shell authentication](github-shell-auth.md) — a connected GitHub account may not authenticate shell `gh` or HTTPS pushes; verify before promising sync.
 - [Room picker presentation](room-picker-modal-pattern.md) — keep room selection inline in device settings; the stacked modal did not show reliably on iPhone.

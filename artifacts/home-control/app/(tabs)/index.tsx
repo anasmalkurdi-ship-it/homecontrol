@@ -406,6 +406,90 @@ function getTuyaPowerState(control: HomeControl): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function getTuyaInchingDp(control: HomeControl): TuyaSchema | null {
+  return (
+    control.tuyaSchema?.find(
+      (schema) =>
+        schema.code.toLowerCase() === 'switch_inching' ||
+        schema.name.toLowerCase().includes('inching'),
+    ) ?? null
+  );
+}
+
+function getTuyaSwitchChannelId(control: HomeControl): number | null {
+  const switchSchema = getTuyaSwitchDps(control)[0];
+  if (!switchSchema) return null;
+
+  const channelNumber =
+    switchSchema.code.match(/(?:switch|relay|power)[_-]?(\d+)$/i)?.[1] ??
+    switchSchema.name.match(/(?:switch|channel)\s*(\d+)$/i)?.[1] ??
+    (/^\d+$/.test(switchSchema.dpId) &&
+    Number(switchSchema.dpId) >= 1 &&
+    Number(switchSchema.dpId) <= 6
+      ? switchSchema.dpId
+      : null);
+  if (!channelNumber) return null;
+
+  const channelId = Number(channelNumber) - 1;
+  return Number.isInteger(channelId) && channelId >= 0 && channelId <= 5
+    ? channelId
+    : null;
+}
+
+function parseInchingRecords(
+  value: unknown,
+): Map<number, InchingConfig> | null {
+  if (value === undefined || value === null || value === '') return new Map();
+  if (typeof value !== 'string') return null;
+
+  const normalized = value
+    .trim()
+    .replace(/0x/gi, '')
+    .replace(/[\s,:-]/g, '');
+  if (
+    !normalized ||
+    normalized.length % 6 !== 0 ||
+    !/^[\da-f]+$/i.test(normalized)
+  ) {
+    return null;
+  }
+
+  const records = new Map<number, InchingConfig>();
+  for (let offset = 0; offset < normalized.length; offset += 6) {
+    const channelAndEnabled = Number.parseInt(
+      normalized.slice(offset, offset + 2),
+      16,
+    );
+    const durationSeconds = Number.parseInt(
+      normalized.slice(offset + 2, offset + 6),
+      16,
+    );
+    const channelId = channelAndEnabled >> 1;
+    if (channelId > 5) return null;
+    records.set(channelId, {
+      enabled: (channelAndEnabled & 1) === 1,
+      durationSeconds,
+    });
+  }
+  return records;
+}
+
+function encodeInchingRecords(records: Map<number, InchingConfig>): string {
+  return [...records.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([channelId, config]) => {
+      const channelAndEnabled = (channelId << 1) | (config.enabled ? 1 : 0);
+      return [
+        channelAndEnabled,
+        config.durationSeconds >> 8,
+        config.durationSeconds & 0xff,
+      ]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+    })
+    .join('');
+}
+
 function isControlActive(control: HomeControl): boolean {
   return (
     !control.isUnused &&
@@ -588,6 +672,11 @@ export default function HomeScreen() {
   const [wattageError, setWattageError] = useState<string | null>(null);
   const [deviceNameInput, setDeviceNameInput] = useState('');
   const [deviceNameError, setDeviceNameError] = useState<string | null>(null);
+  const [inchingEnabled, setInchingEnabled] = useState(false);
+  const [inchingMinutes, setInchingMinutes] = useState('0');
+  const [inchingSeconds, setInchingSeconds] = useState('2');
+  const [inchingError, setInchingError] = useState<string | null>(null);
+  const [inchingSaving, setInchingSaving] = useState(false);
   const [onShortcutInput, setOnShortcutInput] = useState('');
   const [offShortcutInput, setOffShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
@@ -734,6 +823,18 @@ export default function HomeScreen() {
   );
   const settingsControl =
     data.controls.find((control) => control.id === settingsControlId) ?? null;
+  const settingsInchingDp =
+    settingsControl?.controlMethod === 'tuya-sdk'
+      ? getTuyaInchingDp(settingsControl)
+      : null;
+  const settingsInchingChannelId = settingsControl
+    ? getTuyaSwitchChannelId(settingsControl)
+    : null;
+  const settingsInchingRecords = settingsInchingDp && settingsControl
+    ? parseInchingRecords(settingsControl.tuyaDps?.[settingsInchingDp.dpId])
+    : null;
+  const settingsInchingFormatUnsupported =
+    Boolean(settingsInchingDp) && settingsInchingRecords === null;
   const settingsControlDefinition = deviceKinds.find(
     (kind) => kind.key === settingsControl?.kind,
   );
@@ -829,6 +930,17 @@ export default function HomeScreen() {
 
   const openControlSettings = (controlId: string) => {
     const control = data.controls.find((item) => item.id === controlId);
+    const inchingDp = control ? getTuyaInchingDp(control) : null;
+    const channelId = control ? getTuyaSwitchChannelId(control) : null;
+    const inchingRecords = inchingDp && control
+      ? parseInchingRecords(control.tuyaDps?.[inchingDp.dpId])
+      : null;
+    const inchingConfig =
+      channelId !== null && inchingRecords ? inchingRecords.get(channelId) : null;
+    const durationSeconds =
+      inchingConfig?.durationSeconds && inchingConfig.durationSeconds > 0
+        ? inchingConfig.durationSeconds
+        : 2;
     setRoomPickerControlId(null);
     setWattageInput(
       typeof control?.wattage === 'number' ? String(control.wattage) : '',
@@ -838,6 +950,14 @@ export default function HomeScreen() {
     setWattageError(null);
     setDeviceNameInput(control?.name ?? '');
     setDeviceNameError(null);
+    setInchingEnabled(inchingConfig?.enabled ?? false);
+    setInchingMinutes(String(Math.floor(durationSeconds / 60)));
+    setInchingSeconds(String(durationSeconds % 60).padStart(2, '0'));
+    setInchingError(
+      inchingDp && inchingRecords === null
+        ? 'This device’s inching data is not in a format the app can safely edit.'
+        : null,
+    );
     setSettingsControlId(controlId);
   };
 
@@ -872,6 +992,94 @@ export default function HomeScreen() {
       ),
     }));
     void Haptics.selectionAsync();
+  };
+
+  const saveInchingSettings = async () => {
+    if (!settingsControl || !settingsInchingDp) return;
+    if (
+      settingsInchingDp.mode.toLowerCase() === 'ro' ||
+      settingsInchingChannelId === null
+    ) {
+      setInchingError('This switch does not expose writable inching settings.');
+      return;
+    }
+
+    const minutesText = inchingMinutes.trim();
+    const secondsText = inchingSeconds.trim();
+    if (!/^\d+$/.test(minutesText) || !/^\d+$/.test(secondsText)) {
+      setInchingError('Enter whole minutes and seconds.');
+      return;
+    }
+
+    const minutes = Number(minutesText);
+    const seconds = Number(secondsText);
+    const durationSeconds = minutes * 60 + seconds;
+    if (
+      !Number.isInteger(minutes) ||
+      minutes < 0 ||
+      !Number.isInteger(seconds) ||
+      seconds < 0 ||
+      seconds > 59 ||
+      durationSeconds < 1 ||
+      durationSeconds > 65535
+    ) {
+      setInchingError('Choose a duration from 1 second to 18 hours, 12 minutes, 15 seconds.');
+      return;
+    }
+
+    const records = parseInchingRecords(
+      settingsControl.tuyaDps?.[settingsInchingDp.dpId],
+    );
+    if (!records) {
+      setInchingError(
+        'This device’s inching data is not in a format the app can safely edit.',
+      );
+      return;
+    }
+
+    records.set(settingsInchingChannelId, {
+      enabled: inchingEnabled,
+      durationSeconds,
+    });
+    const encodedValue = encodeInchingRecords(records);
+    const deviceId = settingsControl.tuyaDeviceId;
+    const homeId = settingsControl.tuyaHomeId;
+    if (!deviceId || !homeId) {
+      setInchingError('This Tuya device is missing its connection details.');
+      return;
+    }
+
+    setInchingSaving(true);
+    setInchingError(null);
+    try {
+      await TuyaSmartHome.publishDps(deviceId, homeId, {
+        [settingsInchingDp.dpId]: encodedValue,
+      });
+      setData((current) => ({
+        ...current,
+        controls: current.controls.map((control) =>
+          control.controlMethod === 'tuya-sdk' &&
+          control.tuyaDeviceId === deviceId
+            ? {
+                ...control,
+                tuyaDps: {
+                  ...control.tuyaDps,
+                  [settingsInchingDp.dpId]: encodedValue,
+                },
+              }
+            : control,
+        ),
+      }));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      setInchingError(
+        error instanceof Error
+          ? error.message
+          : 'The device did not accept the inching settings.',
+      );
+    } finally {
+      setInchingSaving(false);
+    }
   };
 
   const saveShortcutNames = () => {
@@ -2111,15 +2319,139 @@ export default function HomeScreen() {
                 ) : null}
               </View>
               {settingsControl?.controlMethod === 'tuya-sdk' ? (
-                <View style={styles.wattageField}>
-                  <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    Tuya device ID: {settingsControl.tuyaDeviceId ?? 'Not linked'}
-                  </Text>
-                  <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    Removing this tile will not remove the device from your Tuya
-                    account.
-                  </Text>
-                </View>
+                <>
+                  <View style={styles.wattageField}>
+                    <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                      Tuya device ID: {settingsControl.tuyaDeviceId ?? 'Not linked'}
+                    </Text>
+                    <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                      Removing this tile will not remove the device from your Tuya
+                      account.
+                    </Text>
+                  </View>
+                  {settingsInchingDp && settingsInchingChannelId !== null ? (
+                    <View style={styles.inchingSection} testID="inching-settings">
+                      <View style={styles.wattageField}>
+                        <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                          Inching
+                        </Text>
+                        <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                          Automatically turns this switch off after it is turned on.
+                        </Text>
+                      </View>
+                      <View style={styles.inchingToggleRow}>
+                        <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                          Enable inching
+                        </Text>
+                        <Switch
+                          value={inchingEnabled}
+                          onValueChange={setInchingEnabled}
+                          disabled={
+                            settingsInchingDp.mode.toLowerCase() === 'ro' ||
+                            settingsInchingFormatUnsupported ||
+                            inchingSaving
+                          }
+                          trackColor={{
+                            false: colors.border,
+                            true: colors.primary,
+                          }}
+                          accessibilityLabel={`Enable inching for ${settingsControl.name}`}
+                          testID="inching-enabled-switch"
+                        />
+                      </View>
+                      <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                        Duration
+                      </Text>
+                      <View style={styles.inchingDurationRow}>
+                        <View style={styles.inchingDurationField}>
+                          <TextInput
+                            value={inchingMinutes}
+                            onChangeText={setInchingMinutes}
+                            keyboardType="number-pad"
+                            maxLength={4}
+                            accessibilityLabel="Inching minutes"
+                            testID="inching-minutes-input"
+                            style={[
+                              styles.textInput,
+                              styles.inchingNumberInput,
+                              {
+                                backgroundColor: colors.background,
+                                borderColor: colors.border,
+                                color: colors.foreground,
+                              },
+                            ]}
+                          />
+                          <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                            min
+                          </Text>
+                        </View>
+                        <View style={styles.inchingDurationField}>
+                          <TextInput
+                            value={inchingSeconds}
+                            onChangeText={setInchingSeconds}
+                            keyboardType="number-pad"
+                            maxLength={2}
+                            accessibilityLabel="Inching seconds"
+                            testID="inching-seconds-input"
+                            style={[
+                              styles.textInput,
+                              styles.inchingNumberInput,
+                              {
+                                backgroundColor: colors.background,
+                                borderColor: colors.border,
+                                color: colors.foreground,
+                              },
+                            ]}
+                          />
+                          <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                            sec
+                          </Text>
+                        </View>
+                      </View>
+                      {inchingError ? (
+                        <Text style={[styles.deviceMeta, { color: '#B42318' }]}>
+                          {inchingError}
+                        </Text>
+                      ) : null}
+                      {settingsInchingDp.mode.toLowerCase() === 'ro' ? (
+                        <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                          Tuya reports this setting as read-only.
+                        </Text>
+                      ) : null}
+                      <Pressable
+                        onPress={() => void saveInchingSettings()}
+                        disabled={
+                          inchingSaving ||
+                          settingsInchingDp.mode.toLowerCase() === 'ro' ||
+                          settingsInchingFormatUnsupported
+                        }
+                        accessibilityRole="button"
+                        testID="save-inching-settings"
+                        style={({ pressed }) => [
+                          styles.submitButton,
+                          {
+                            backgroundColor: colors.primary,
+                            opacity:
+                              inchingSaving ||
+                              settingsInchingDp.mode.toLowerCase() === 'ro' ||
+                              settingsInchingFormatUnsupported
+                                ? 0.55
+                                : 1,
+                          },
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        {inchingSaving ? (
+                          <ActivityIndicator color={colors.background} />
+                        ) : (
+                          <Text style={[styles.submitText, { color: colors.background }]}>
+                            Save inching settings
+                          </Text>
+                        )}
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </>
               ) : (
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
@@ -2588,6 +2920,21 @@ const styles = StyleSheet.create({
   wattageInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   wattageInput: { flex: 1 },
   wattageUnit: { fontSize: 13, fontWeight: '700' },
+  inchingSection: { gap: 10, paddingTop: 8 },
+  inchingToggleRow: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  inchingDurationRow: { flexDirection: 'row', gap: 12 },
+  inchingDurationField: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  inchingNumberInput: { textAlign: 'center' },
   wattageSaveButton: {
     width: 46,
     height: 46,
