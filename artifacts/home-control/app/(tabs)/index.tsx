@@ -45,7 +45,7 @@ type DeviceKind =
   | 'nightLight'
   | 'airConditioner';
 type DeviceIcon = keyof typeof MaterialCommunityIcons.glyphMap;
-type RoomIcon = 'home-outline' | 'bed' | 'grass' | 'laptop' | 'sofa';
+type RoomIcon = 'home-outline' | 'bed' | 'grass' | 'laptop' | 'sofa' | 'stove';
 type ShortcutAction = 'on' | 'off';
 type ControlMethod = 'shortcut' | 'tuya-sdk';
 
@@ -160,6 +160,7 @@ const roomIconOptions: { icon: RoomIcon; label: string }[] = [
   { icon: 'grass', label: 'Garden' },
   { icon: 'laptop', label: 'Office' },
   { icon: 'sofa', label: 'Living room' },
+  { icon: 'stove', label: 'Kitchen' },
 ];
 
 function createId() {
