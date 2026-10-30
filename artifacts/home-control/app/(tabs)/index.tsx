@@ -61,6 +61,7 @@ type HomeControl = {
   tuyaDps?: Record<string, unknown>;
   tuyaSchema?: TuyaSchema[];
   tuyaOnline?: boolean;
+  nameCustomized?: boolean;
 };
 
 type HomeData = {
@@ -187,7 +188,9 @@ function parseHomeData(raw: string | null): HomeData {
                   typeof schema.mode === 'string',
               ))) &&
           (control.tuyaOnline === undefined ||
-            typeof control.tuyaOnline === 'boolean'),
+            typeof control.tuyaOnline === 'boolean') &&
+          (control.nameCustomized === undefined ||
+            typeof control.nameCustomized === 'boolean'),
       )
         .map((control) => {
           const onShortcutName =
@@ -232,6 +235,9 @@ function parseHomeData(raw: string | null): HomeData {
               : {}),
             ...(typeof control.tuyaOnline === 'boolean'
               ? { tuyaOnline: control.tuyaOnline }
+              : {}),
+            ...(typeof control.nameCustomized === 'boolean'
+              ? { nameCustomized: control.nameCustomized }
               : {}),
           };
         })
@@ -443,6 +449,8 @@ export default function HomeScreen() {
   const [settingsControlId, setSettingsControlId] = useState<string | null>(null);
   const [wattageInput, setWattageInput] = useState('');
   const [wattageError, setWattageError] = useState<string | null>(null);
+  const [deviceNameInput, setDeviceNameInput] = useState('');
+  const [deviceNameError, setDeviceNameError] = useState<string | null>(null);
   const [onShortcutInput, setOnShortcutInput] = useState('');
   const [offShortcutInput, setOffShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
@@ -471,7 +479,7 @@ export default function HomeScreen() {
         control.tuyaDeviceId === snapshot.deviceId
           ? {
               ...control,
-              name: snapshot.name || control.name,
+              name: control.nameCustomized ? control.name : snapshot.name || control.name,
               tuyaDps: snapshot.dps,
               tuyaSchema: snapshot.schema,
               tuyaOnline: snapshot.isOnline,
@@ -635,7 +643,29 @@ export default function HomeScreen() {
     setOnShortcutInput(control?.onShortcutName ?? control?.shortcutName ?? '');
     setOffShortcutInput(control?.offShortcutName ?? '');
     setWattageError(null);
+    setDeviceNameInput(control?.name ?? '');
+    setDeviceNameError(null);
     setSettingsControlId(controlId);
+  };
+
+  const saveDeviceName = () => {
+    if (!settingsControl) return;
+    const name = deviceNameInput.trim();
+    if (!name) {
+      setDeviceNameError('Enter a name for this device.');
+      return;
+    }
+    setData((current) => ({
+      ...current,
+      controls: current.controls.map((control) =>
+        control.id === settingsControl.id
+          ? { ...control, name, nameCustomized: true }
+          : control,
+      ),
+    }));
+    setDeviceNameError(null);
+    Keyboard.dismiss();
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const saveShortcutNames = () => {
@@ -1499,6 +1529,56 @@ export default function HomeScreen() {
                     color={colors.foreground}
                   />
                 </Pressable>
+              </View>
+              <View style={styles.wattageField}>
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  Name in Home Control
+                </Text>
+                <TextInput
+                  value={deviceNameInput}
+                  onChangeText={(value) => {
+                    setDeviceNameInput(value);
+                    setDeviceNameError(null);
+                  }}
+                  maxLength={60}
+                  returnKeyType="done"
+                  onSubmitEditing={saveDeviceName}
+                  placeholder="Enter a device name"
+                  placeholderTextColor={colors.mutedForeground}
+                  accessibilityLabel="Name in Home Control"
+                  testID="device-name-input"
+                  style={[
+                    styles.textInput,
+                    {
+                      backgroundColor: colors.background,
+                      borderColor: colors.border,
+                      color: colors.foreground,
+                    },
+                  ]}
+                />
+                <Pressable
+                  onPress={saveDeviceName}
+                  accessibilityRole="button"
+                  accessibilityLabel="Save device name"
+                  testID="save-device-name-button"
+                  style={({ pressed }) => [
+                    styles.submitButton,
+                    { backgroundColor: colors.primary },
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Text style={[styles.submitText, { color: colors.primaryForeground }]}>
+                    Save name
+                  </Text>
+                </Pressable>
+                <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                  This changes the label in Home Control only.
+                </Text>
+                {deviceNameError ? (
+                  <Text style={[styles.deviceMeta, { color: colors.destructive }]}>
+                    {deviceNameError}
+                  </Text>
+                ) : null}
               </View>
               <View
                 style={[
