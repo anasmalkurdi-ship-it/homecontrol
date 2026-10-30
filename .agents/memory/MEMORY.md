@@ -1,2 +1,3 @@
 - [Tuya connection direction](tuya-connection-scope.md) — native iPhone-only SDK migration; custom-app accounts are separate from consumer Smart Life.
 - [GitHub shell authentication](github-shell-auth.md) — a connected GitHub account may not authenticate shell `gh` or HTTPS pushes; verify before promising sync.
+- [Room picker presentation](room-picker-modal-pattern.md) — keep room selection inline in device settings; the stacked modal did not show reliably on iPhone.

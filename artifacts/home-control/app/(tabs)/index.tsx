@@ -39,6 +39,7 @@ type DeviceKind =
   | 'heater'
   | 'nightLight'
   | 'airConditioner';
+type DeviceIcon = keyof typeof MaterialCommunityIcons.glyphMap;
 type ShortcutAction = 'on' | 'off';
 type ControlMethod = 'shortcut' | 'tuya-sdk';
 
@@ -52,6 +53,7 @@ type HomeControl = {
   roomId: string;
   name: string;
   kind: DeviceKind;
+  customIcon?: DeviceIcon;
   wattage?: number;
   onShortcutName?: string;
   offShortcutName?: string;
@@ -83,7 +85,7 @@ const deviceKinds: {
   key: DeviceKind;
   label: string;
   defaultName: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  icon: DeviceIcon;
 }[] = [
   {
     key: 'chandelier',
@@ -142,6 +144,16 @@ function isDeviceKind(value: unknown): value is DeviceKind {
     value === 'heater' ||
     value === 'nightLight' ||
     value === 'airConditioner'
+  );
+}
+
+function isDeviceIcon(value: unknown): value is DeviceIcon {
+  return (
+    typeof value === 'string' &&
+    Object.prototype.hasOwnProperty.call(
+      MaterialCommunityIcons.glyphMap,
+      value,
+    )
   );
 }
 
@@ -230,6 +242,9 @@ function parseHomeData(raw: string | null): HomeData {
             roomId: control.roomId,
             name: control.name,
             kind: control.kind,
+            ...(isDeviceIcon(control.customIcon)
+              ? { customIcon: control.customIcon }
+              : {}),
             ...(typeof control.wattage === 'number'
               ? { wattage: control.wattage }
               : {}),
@@ -468,7 +483,7 @@ function UnpairedControlCard({
         ]}
       >
         <MaterialCommunityIcons
-          name={definition?.icon ?? 'lightbulb-outline'}
+          name={control.customIcon ?? definition?.icon ?? 'lightbulb-outline'}
           size={21}
           color={lastRequestedOn ? orange : colors.primary}
         />
@@ -672,6 +687,13 @@ export default function HomeScreen() {
   );
   const settingsControl =
     data.controls.find((control) => control.id === settingsControlId) ?? null;
+  const settingsControlDefinition = deviceKinds.find(
+    (kind) => kind.key === settingsControl?.kind,
+  );
+  const settingsControlDefaultIcon =
+    settingsControlDefinition?.icon ?? 'cog-outline';
+  const settingsControlIcon =
+    settingsControl?.customIcon ?? settingsControlDefaultIcon;
   const roomPickerControl =
     data.controls.find((control) => control.id === roomPickerControlId) ?? null;
   const roomControls = useMemo(
@@ -760,6 +782,7 @@ export default function HomeScreen() {
 
   const openControlSettings = (controlId: string) => {
     const control = data.controls.find((item) => item.id === controlId);
+    setRoomPickerControlId(null);
     setWattageInput(
       typeof control?.wattage === 'number' ? String(control.wattage) : '',
     );
@@ -789,6 +812,19 @@ export default function HomeScreen() {
     setDeviceNameError(null);
     Keyboard.dismiss();
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const saveDeviceIcon = (icon?: DeviceIcon) => {
+    if (!settingsControl) return;
+    setData((current) => ({
+      ...current,
+      controls: current.controls.map((control) =>
+        control.id === settingsControl.id
+          ? { ...control, customIcon: icon }
+          : control,
+      ),
+    }));
+    void Haptics.selectionAsync();
   };
 
   const saveShortcutNames = () => {
@@ -994,7 +1030,6 @@ export default function HomeScreen() {
     }));
     setShowUnusedDevices(false);
     setRoomPickerControlId(null);
-    setSettingsControlId(null);
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
@@ -1078,6 +1113,43 @@ export default function HomeScreen() {
           </View>
         </View>
         <View style={styles.headerActions}>
+          {unusedDeviceCount > 0 || showUnusedDevices ? (
+            <Pressable
+              onPress={() => {
+                setShowUnusedDevices((current) => !current);
+                void Haptics.selectionAsync();
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={
+                showUnusedDevices
+                  ? 'Return to rooms'
+                  : `Unused devices, ${unusedDeviceCount} ${
+                      unusedDeviceCount === 1 ? 'device' : 'devices'
+                    }`
+              }
+              accessibilityState={{ selected: showUnusedDevices }}
+              testID="unused-devices-header-button"
+              style={({ pressed }) => [
+                styles.signOutButton,
+                {
+                  backgroundColor: showUnusedDevices
+                    ? colors.primary
+                    : colors.secondary,
+                },
+                pressed && styles.pressed,
+              ]}
+            >
+              <MaterialCommunityIcons
+                name="archive-outline"
+                size={18}
+                color={
+                  showUnusedDevices
+                    ? colors.primaryForeground
+                    : colors.primary
+                }
+              />
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={leaveHome}
             accessibilityLabel="Sign out"
@@ -1135,6 +1207,28 @@ export default function HomeScreen() {
             : activeRatedWattage.toFixed(1)}{' '}
           W
         </Text>
+        {activeRoom && !showUnusedDevices ? (
+          <Pressable
+            onPress={openControlDialog}
+            accessibilityRole="button"
+            accessibilityLabel="Add device tile"
+            testID="add-control-button"
+            style={({ pressed }) => [
+              styles.addControlButton,
+              { backgroundColor: colors.primary },
+              pressed && styles.pressed,
+            ]}
+          >
+            <MaterialCommunityIcons
+              name="plus"
+              size={20}
+              color={colors.primaryForeground}
+            />
+            <Text style={[styles.addControlText, { color: colors.primaryForeground }]}>
+              Add
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {storageError && (
@@ -1238,64 +1332,6 @@ export default function HomeScreen() {
                 </Pressable>
               );
             })}
-            <Pressable
-              onPress={() => setShowUnusedDevices(true)}
-              accessibilityRole="button"
-              accessibilityLabel={`Unused devices, ${unusedDeviceCount} ${
-                unusedDeviceCount === 1 ? 'device' : 'devices'
-              }`}
-              accessibilityState={{ selected: showUnusedDevices }}
-              testID="unused-devices-view-button"
-              style={({ pressed }) => [
-                styles.roomItem,
-                {
-                  backgroundColor: showUnusedDevices
-                    ? colors.primary
-                    : 'transparent',
-                  borderColor: showUnusedDevices
-                    ? colors.primary
-                    : 'transparent',
-                },
-                pressed && styles.pressed,
-              ]}
-            >
-              <MaterialCommunityIcons
-                name="archive-outline"
-                size={19}
-                color={
-                  showUnusedDevices
-                    ? colors.primaryForeground
-                    : colors.mutedForeground
-                }
-              />
-              <View style={styles.roomText}>
-                <Text
-                  numberOfLines={1}
-                  style={[
-                    styles.roomName,
-                    {
-                      color: showUnusedDevices
-                        ? colors.primaryForeground
-                        : colors.foreground,
-                    },
-                  ]}
-                >
-                  Unused devices
-                </Text>
-                <Text
-                  style={[
-                    styles.roomCount,
-                    {
-                      color: showUnusedDevices
-                        ? colors.primaryForeground + 'B8'
-                        : colors.mutedForeground,
-                    },
-                  ]}
-                >
-                  {unusedDeviceCount} {unusedDeviceCount === 1 ? 'device' : 'devices'}
-                </Text>
-              </View>
-            </Pressable>
             {data.rooms.length === 0 && (
               <Text style={[styles.railHint, { color: colors.mutedForeground }]}>
                 Add your first room
@@ -1307,48 +1343,6 @@ export default function HomeScreen() {
         <View style={styles.roomContent}>
           {activeRoom || showUnusedDevices ? (
             <>
-              <View style={styles.roomHeader}>
-                <View style={styles.roomTitleBlock}>
-                  <Text style={[styles.sectionEyebrow, { color: colors.mutedForeground }]}>
-                    {showUnusedDevices ? 'DEVICES' : 'ROOM'}
-                  </Text>
-                  <Text
-                    numberOfLines={2}
-                    style={[styles.roomTitle, { color: colors.foreground }]}
-                  >
-                    {showUnusedDevices ? 'Unused devices' : activeRoom?.name}
-                  </Text>
-                  <Text style={[styles.roomSubtitle, { color: colors.mutedForeground }]}>
-                    {roomControls.length === 0
-                      ? showUnusedDevices
-                        ? 'Hidden device tiles appear here'
-                        : 'No controls added yet'
-                      : `${roomControls.length} ${roomControls.length === 1 ? 'control' : 'controls'}`}
-                  </Text>
-                </View>
-                {!showUnusedDevices ? (
-                  <Pressable
-                    onPress={openControlDialog}
-                    accessibilityLabel="Add device tile"
-                    testID="add-control-button"
-                    style={({ pressed }) => [
-                      styles.addControlButton,
-                      { backgroundColor: colors.primary },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <MaterialCommunityIcons
-                      name="plus"
-                      size={20}
-                      color={colors.primaryForeground}
-                    />
-                    <Text style={[styles.addControlText, { color: colors.primaryForeground }]}>
-                      Add
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-
               <ScrollView
                 style={styles.controlsScroll}
                 contentContainerStyle={styles.controlsList}
@@ -1723,13 +1717,23 @@ export default function HomeScreen() {
             <View
               style={[
                 styles.sheet,
+                styles.settingsSheet,
                 {
                   backgroundColor: colors.card,
                   borderColor: colors.border,
-                  paddingBottom: Math.max(insets.bottom, 18) + 12,
+                  paddingBottom: 0,
                 },
               ]}
             >
+              <ScrollView
+                style={styles.settingsScroll}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={[
+                  styles.settingsScrollContent,
+                  { paddingBottom: Math.max(insets.bottom, 18) + 12 },
+                ]}
+              >
               <View style={styles.sheetHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
@@ -1813,10 +1817,7 @@ export default function HomeScreen() {
                 ]}
               >
                 <MaterialCommunityIcons
-                  name={
-                    deviceKinds.find((kind) => kind.key === settingsControl?.kind)
-                      ?.icon ?? 'cog-outline'
-                  }
+                  name={settingsControlIcon}
                   size={20}
                   color={colors.primary}
                 />
@@ -1846,6 +1847,76 @@ export default function HomeScreen() {
                   </Text>
                 </View>
               </View>
+              <View style={styles.iconPickerField}>
+                <View style={styles.iconPickerHeader}>
+                  <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                    Tile icon
+                  </Text>
+                  <Pressable
+                    onPress={() => saveDeviceIcon()}
+                    disabled={!settingsControl?.customIcon}
+                    accessibilityRole="button"
+                    accessibilityLabel="Use device type icon"
+                    testID="reset-device-icon-button"
+                    style={({ pressed }) => [
+                      styles.iconPickerResetButton,
+                      !settingsControl?.customIcon && styles.disabledControl,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text style={[styles.iconPickerResetText, { color: colors.primary }]}>
+                      Use default
+                    </Text>
+                  </Pressable>
+                </View>
+                <ScrollView
+                  horizontal
+                  nestedScrollEnabled
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.iconPickerOptions}
+                >
+                  {deviceKinds.map((kind) => {
+                    const selected = settingsControlIcon === kind.icon;
+                    return (
+                      <Pressable
+                        key={kind.key}
+                        onPress={() => saveDeviceIcon(kind.icon)}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Use ${kind.label} icon`}
+                        accessibilityHint="Changes only this tile's icon."
+                        accessibilityState={{ selected }}
+                        testID={`device-icon-option-${kind.key}`}
+                        style={({ pressed }) => [
+                          styles.iconPickerOption,
+                          {
+                            backgroundColor: selected
+                              ? `${colors.primary}18`
+                              : colors.background,
+                            borderColor: selected
+                              ? colors.primary
+                              : colors.border,
+                          },
+                          selected && styles.iconPickerOptionSelected,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <MaterialCommunityIcons
+                          name={kind.icon}
+                          size={21}
+                          color={
+                            selected
+                              ? colors.primary
+                              : colors.mutedForeground
+                          }
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+                <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                  This changes the icon on this tile only.
+                </Text>
+              </View>
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
                   Room
@@ -1853,18 +1924,17 @@ export default function HomeScreen() {
                 <Pressable
                   onPress={() => {
                     if (settingsControl) {
-                      setRoomPickerControlId(settingsControl.id);
+                      setRoomPickerControlId((current) =>
+                        current === settingsControl.id
+                          ? null
+                          : settingsControl.id,
+                      );
                     }
                   }}
-                  disabled={
-                    !settingsControl?.isUnused &&
-                    data.rooms.filter((room) => room.id !== settingsControl?.roomId)
-                      .length === 0
-                  }
                   accessibilityRole="button"
                   accessibilityLabel={
                     settingsControl?.isUnused
-                      ? 'Assign device to a room'
+                      ? 'Choose a room for this device'
                       : 'Move device to another room'
                   }
                   testID="move-control-to-room-button"
@@ -1887,7 +1957,7 @@ export default function HomeScreen() {
                       {settingsControl?.isUnused
                         ? `Currently assigned to ${
                             data.rooms.find(
-                              (room) => room.id === settingsControl.roomId,
+                              (room) => room.id === settingsControl?.roomId,
                             )?.name ?? 'a room'
                           }`
                         : data.rooms.find(
@@ -1896,15 +1966,98 @@ export default function HomeScreen() {
                     </Text>
                   </View>
                   <MaterialCommunityIcons
-                    name="chevron-right"
+                    name={
+                      roomPickerControl?.id === settingsControl?.id
+                        ? 'chevron-up'
+                        : 'chevron-down'
+                    }
                     size={20}
                     color={colors.mutedForeground}
                   />
                 </Pressable>
-                {!settingsControl?.isUnused && data.rooms.length < 2 ? (
-                  <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                    Add another room before moving this device.
-                  </Text>
+                {roomPickerControl &&
+                roomPickerControl.id === settingsControl?.id ? (
+                  <View style={styles.roomPickerInline}>
+                    {data.rooms.length > 0 ? (
+                      <View style={styles.roomPickerOptions}>
+                        {data.rooms.map((room) => {
+                          const isCurrentRoom =
+                            room.id === roomPickerControl?.roomId;
+                          const isDisabled =
+                            isCurrentRoom && !roomPickerControl?.isUnused;
+                          return (
+                            <Pressable
+                              key={room.id}
+                              onPress={() => assignControlToRoom(room.id)}
+                              disabled={isDisabled}
+                              accessibilityRole="button"
+                              accessibilityLabel={`${room.name}${
+                                isCurrentRoom
+                                  ? roomPickerControl?.isUnused
+                                    ? ', restore here'
+                                    : ', current room'
+                                  : ', move here'
+                              }`}
+                              accessibilityState={{ selected: isCurrentRoom }}
+                              testID={`assign-control-room-${room.id}`}
+                              style={({ pressed }) => [
+                                styles.roomPickerOption,
+                                {
+                                  backgroundColor: colors.background,
+                                  borderColor: isCurrentRoom
+                                    ? colors.primary
+                                    : colors.border,
+                                  opacity: isDisabled ? 0.6 : 1,
+                                },
+                                pressed && styles.pressed,
+                              ]}
+                            >
+                              <Text
+                                numberOfLines={1}
+                                style={[
+                                  styles.deviceName,
+                                  { color: colors.foreground, flex: 1 },
+                                ]}
+                              >
+                                {room.name}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.deviceMeta,
+                                  { color: colors.mutedForeground },
+                                ]}
+                              >
+                                {isCurrentRoom
+                                  ? roomPickerControl?.isUnused
+                                    ? 'Restore here'
+                                    : 'Current room'
+                                  : 'Move here'}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    ) : (
+                      <Text
+                        style={[
+                          styles.deviceMeta,
+                          { color: colors.mutedForeground },
+                        ]}
+                      >
+                        Create a room before assigning this device.
+                      </Text>
+                    )}
+                    {!settingsControl?.isUnused && data.rooms.length < 2 ? (
+                      <Text
+                        style={[
+                          styles.deviceMeta,
+                          { color: colors.mutedForeground },
+                        ]}
+                      >
+                        Add another room before moving this device.
+                      </Text>
+                    ) : null}
+                  </View>
                 ) : null}
               </View>
               {settingsControl?.controlMethod === 'tuya-sdk' ? (
@@ -2102,111 +2255,9 @@ export default function HomeScreen() {
                   Delete tile
                 </Text>
               </Pressable>
+              </ScrollView>
             </View>
           </KeyboardControllerAvoidingView>
-        </View>
-      </Modal>
-      <Modal
-        visible={roomPickerControl !== null}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setRoomPickerControlId(null)}
-      >
-        <View style={styles.modalRoot}>
-          <Pressable
-            style={styles.modalScrim}
-            onPress={() => setRoomPickerControlId(null)}
-            accessibilityLabel="Close room picker"
-          />
-          <View
-            style={[
-              styles.sheet,
-              styles.roomPickerSheet,
-              {
-                backgroundColor: colors.card,
-                borderColor: colors.border,
-                paddingBottom: Math.max(insets.bottom, 18) + 12,
-              },
-            ]}
-          >
-            <View style={styles.sheetHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={[styles.sheetTitle, { color: colors.foreground }]}>
-                  Choose a room
-                </Text>
-                <Text style={[styles.sheetSubtitle, { color: colors.mutedForeground }]}>
-                  {roomPickerControl?.isUnused
-                    ? `Assign ${roomPickerControl.name} to a room.`
-                    : `Move ${roomPickerControl?.name ?? 'this device'} to another room.`}
-                </Text>
-              </View>
-              <Pressable
-                onPress={() => setRoomPickerControlId(null)}
-                accessibilityRole="button"
-                accessibilityLabel="Close room picker"
-                style={({ pressed }) => [
-                  styles.smallIconButton,
-                  { backgroundColor: colors.secondary, borderColor: colors.border },
-                  pressed && styles.pressed,
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name="close"
-                  size={18}
-                  color={colors.foreground}
-                />
-              </Pressable>
-            </View>
-            <ScrollView
-              style={styles.roomPickerList}
-              contentContainerStyle={styles.roomPickerOptions}
-              showsVerticalScrollIndicator={false}
-            >
-              {data.rooms.map((room) => {
-                const isCurrentRoom = room.id === roomPickerControl?.roomId;
-                const isDisabled = isCurrentRoom && !roomPickerControl?.isUnused;
-                return (
-                  <Pressable
-                    key={room.id}
-                    onPress={() => assignControlToRoom(room.id)}
-                    disabled={isDisabled}
-                    accessibilityRole="button"
-                    accessibilityLabel={`${room.name}${
-                      isCurrentRoom
-                        ? roomPickerControl?.isUnused
-                          ? ', restore here'
-                          : ', current room'
-                        : ', move here'
-                    }`}
-                    testID={`assign-control-room-${room.id}`}
-                    style={({ pressed }) => [
-                      styles.roomPickerOption,
-                      {
-                        backgroundColor: colors.background,
-                        borderColor: colors.border,
-                        opacity: isDisabled ? 0.6 : 1,
-                      },
-                      pressed && styles.pressed,
-                    ]}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={[styles.deviceName, { color: colors.foreground, flex: 1 }]}
-                    >
-                      {room.name}
-                    </Text>
-                    <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
-                      {isCurrentRoom
-                        ? roomPickerControl?.isUnused
-                          ? 'Restore here'
-                          : 'Current room'
-                        : 'Move here'}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          </View>
         </View>
       </Modal>
       <TuyaPairingFlow
@@ -2323,18 +2374,6 @@ const styles = StyleSheet.create({
   roomCount: { fontSize: 8, fontWeight: '500' },
   railHint: { fontSize: 10, lineHeight: 15, paddingHorizontal: 4 },
   roomContent: { flex: 1, minWidth: 0, paddingLeft: 14, paddingTop: 4 },
-  roomHeader: {
-    minHeight: 77,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 7,
-    marginBottom: 12,
-  },
-  roomTitleBlock: { flex: 1, minWidth: 0 },
-  sectionEyebrow: { fontSize: 9, fontWeight: '700', letterSpacing: 1.5 },
-  roomTitle: { fontSize: 21, lineHeight: 26, fontWeight: '700', marginTop: 3 },
-  roomSubtitle: { fontSize: 10, marginTop: 3 },
   addControlButton: {
     height: 39,
     borderRadius: 13,
@@ -2426,6 +2465,7 @@ const styles = StyleSheet.create({
     paddingTop: 22,
     gap: 14,
   },
+  settingsSheet: { maxHeight: '92%', gap: 0 },
   sheetHeader: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -2436,6 +2476,8 @@ const styles = StyleSheet.create({
   sheetTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.4 },
   sheetSubtitle: { fontSize: 11, lineHeight: 16, marginTop: 5, maxWidth: 270 },
   settingsKeyboard: { width: '100%' },
+  settingsScroll: { flexShrink: 1 },
+  settingsScrollContent: { gap: 14 },
   settingsSummary: {
     minHeight: 74,
     borderRadius: 16,
@@ -2445,6 +2487,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  iconPickerField: { gap: 8 },
+  iconPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  iconPickerResetButton: {
+    minHeight: 30,
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  iconPickerResetText: { fontSize: 11, fontWeight: '700' },
+  iconPickerOptions: { gap: 9, paddingVertical: 2, paddingHorizontal: 1 },
+  iconPickerOption: {
+    width: 42,
+    height: 42,
+    borderWidth: 1,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconPickerOptionSelected: { borderWidth: 2 },
+  disabledControl: { opacity: 0.45 },
   settingsActionButton: {
     minHeight: 52,
     borderWidth: 1,
@@ -2456,8 +2522,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   settingsActionText: { fontSize: 12, fontWeight: '700' },
-  roomPickerSheet: { maxHeight: '78%' },
-  roomPickerList: { maxHeight: 360 },
+  roomPickerInline: { gap: 8, paddingTop: 4 },
   roomPickerOptions: { gap: 8, paddingBottom: 4 },
   roomPickerOption: {
     minHeight: 50,
