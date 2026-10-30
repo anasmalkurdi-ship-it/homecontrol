@@ -14,3 +14,9 @@ Tuya's public Swift sample is useful for current API examples, but intentionally
 **Why:** The user provided an explicit migration plan: preserve current working controls and interface while adding native Tuya pairing/control; remove Shortcut support only after migration. The SDK archive includes an app-specific security dependency, and current Replit documentation distinguishes ordinary Expo preview from custom native builds.
 
 **How to apply:** Keep Shortcut launching enabled for unmigrated devices; distinguish Shortcut from Tuya SDK devices and migrate one device at a time. Use the generated iOS package with the matching SmartLife SDK version and secure App SDK credentials. Plan custom iOS compilation/testing outside the Replit workspace. Do not put credentials in JavaScript or logs, do not reuse Cloud API keys, and do not fall back to Tuya Cloud.
+
+Tuya account systems are isolated between apps. Do not instruct users to sign into the custom HomeControl SDK app with an existing consumer Smart Life account. They must register an account for this SDK app (the same email can be used); existing Smart Life devices do not automatically transfer.
+
+**Why:** Tuya's official Help Center confirms different apps have isolated account systems: https://support.tuya.com/en/help/_detail/K9hrdzaocxaoa . Incorrect UI guidance led to valid Smart Life credentials being rejected by the custom app.
+
+**How to apply:** Clearly distinguish the SDK-app account from both consumer Smart Life and the app's own primary sign-in. Keep existing devices untouched until account setup succeeds, then migrate only the agreed test device.

@@ -1373,8 +1373,9 @@ export default function HomeScreen() {
                         { color: colors.mutedForeground },
                       ]}
                     >
-                      Pair a device already reset for Wi-Fi setup using the same
-                      Smart Life account. Existing Shortcut tiles keep working.
+                      Pair a device already reset for Wi-Fi setup using your
+                      Home Control Tuya account. Smart Life accounts are separate.
+                      Existing Shortcut tiles keep working.
                     </Text>
                   </View>
                 </View>

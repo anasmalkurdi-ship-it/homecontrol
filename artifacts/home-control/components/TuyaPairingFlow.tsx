@@ -15,6 +15,7 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import { TuyaAccountForm } from '@/components/TuyaAccountForm';
 import {
   TuyaSmartHome,
   type TuyaDeviceSnapshot,
@@ -42,9 +43,6 @@ export function TuyaPairingFlow({
   const insets = useSafeAreaInsets();
   const [moduleStatus, setModuleStatus] = useState<ModuleStatus>('checking');
   const [loggedIn, setLoggedIn] = useState(false);
-  const [countryCode, setCountryCode] = useState('');
-  const [email, setEmail] = useState('');
-  const [accountPassword, setAccountPassword] = useState('');
   const [homes, setHomes] = useState<TuyaHome[]>([]);
   const [selectedHomeId, setSelectedHomeId] = useState<string | null>(null);
   const [homeName, setHomeName] = useState('Home Control');
@@ -128,34 +126,6 @@ export function TuyaPairingFlow({
       }
     };
   }, [loadHomes, visible]);
-
-  const handleLogin = async () => {
-    if (!countryCode.trim() || !email.trim() || !accountPassword) {
-      setError('Enter the account country code, email, and password.');
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await TuyaSmartHome.loginByEmail(
-        countryCode.trim().replace(/^\+/, ''),
-        email.trim(),
-        accountPassword,
-      );
-      setAccountPassword('');
-      setLoggedIn(true);
-      await loadHomes();
-    } catch (loginError) {
-      setError(
-        loginError instanceof Error
-          ? loginError.message
-          : 'Tuya sign-in failed.',
-      );
-    } finally {
-      setBusy(false);
-      Keyboard.dismiss();
-    }
-  };
 
   const handleCreateHome = async () => {
     const cleanName = homeName.trim();
@@ -356,58 +326,18 @@ export function TuyaPairingFlow({
                 />
               ) : null}
 
-              {moduleStatus === 'ready' && !loggedIn ? (
-                <View style={styles.section}>
-                  <Text style={[styles.sectionTitle, { color: colors.foreground }]}>
-                    Sign in to the same Smart Life account
-                  </Text>
-                  <Text style={[styles.body, { color: colors.mutedForeground }]}>
-                    Use the account that already owns the devices in Smart Life.
-                    Your password is sent to Tuya by its iOS SDK and is not saved
-                    by Home Control.
-                  </Text>
-                  <TextInput
-                    value={countryCode}
-                    onChangeText={setCountryCode}
-                    placeholder="Country calling code, e.g. 968"
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="phone-pad"
-                    accessibilityLabel="Tuya account country code"
-                    testID="tuya-country-code-input"
-                    style={inputStyle}
-                  />
-                  <TextInput
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="Smart Life account email"
-                    placeholderTextColor={colors.mutedForeground}
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    textContentType="emailAddress"
-                    accessibilityLabel="Tuya account email"
-                    testID="tuya-account-email-input"
-                    style={inputStyle}
-                  />
-                  <TextInput
-                    value={accountPassword}
-                    onChangeText={setAccountPassword}
-                    placeholder="Smart Life account password"
-                    placeholderTextColor={colors.mutedForeground}
-                    secureTextEntry
-                    textContentType="password"
-                    accessibilityLabel="Tuya account password"
-                    testID="tuya-account-password-input"
-                    style={inputStyle}
-                  />
-                  <PrimaryButton
-                    title="Sign in to Tuya"
-                    busy={busy}
-                    onPress={handleLogin}
-                    testID="tuya-login-button"
-                    colors={colors}
-                  />
-                </View>
+              {visible && moduleStatus === 'ready' && !loggedIn ? (
+                <TuyaAccountForm
+                  onAuthenticated={async () => {
+                    setLoggedIn(true);
+                    setError(null);
+                    try {
+                      await loadHomes();
+                    } catch (loadError) {
+                      setError(loadError instanceof Error ? loadError.message : 'Could not load your Tuya homes.');
+                    }
+                  }}
+                />
               ) : null}
 
               {moduleStatus === 'ready' && loggedIn ? (

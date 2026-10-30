@@ -1,2 +1,2 @@
-- [Tuya connection direction](tuya-connection-scope.md) — user now wants native iPhone-only Tuya SDK pairing; no web app.
+- [Tuya connection direction](tuya-connection-scope.md) — native iPhone-only SDK migration; custom-app accounts are separate from consumer Smart Life.
 - [GitHub shell authentication](github-shell-auth.md) — a connected GitHub account may not authenticate shell `gh` or HTTPS pushes; verify before promising sync.
