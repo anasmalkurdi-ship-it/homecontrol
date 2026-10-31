@@ -12,9 +12,9 @@ Pod::Spec.new do |s|
   s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
-  s.dependency 'ThingSmartHomeKit', '~> 7.8.0'
+  s.dependency 'ThingSmartHomeKit', '~> 7.11.0'
   s.dependency 'ThingSmartSceneCoreKit', '5.23.3.2'
-  s.dependency 'ThingSmartBusinessExtensionKit', '~> 7.8.0'
+  s.dependency 'ThingSmartBusinessExtensionKit', '~> 7.11.0'
 
   s.source_files = '*.swift'
   s.pod_target_xcconfig = {

@@ -15,6 +15,12 @@ Tuya's public Swift sample is useful for current API examples, but intentionally
 
 **How to apply:** Keep Shortcut launching enabled for unmigrated devices; distinguish Shortcut from Tuya SDK devices and migrate one device at a time. Use the generated iOS package with the matching SmartLife SDK version and secure App SDK credentials. Plan custom iOS compilation/testing outside the Replit workspace. Do not put credentials in JavaScript or logs, do not reuse Cloud API keys, and do not fall back to Tuya Cloud.
 
+For native SDK updates, preserve registered devices and room controls. Keep the app bundle identifier and AsyncStorage data key unchanged, update the existing app in place, and never delete the installed app or clear its data without explicit user approval.
+
+**Why:** The user explicitly asked that SDK updates not lose their paired devices or configured buttons.
+
+**How to apply:** Before an Xcode rebuild, verify the bundle identifier and local storage key remain unchanged. Tell the user not to uninstall the app; if Xcode cannot update it in place, stop before removing the existing app.
+
 Tuya account systems are isolated between apps. Do not instruct users to sign into the custom HomeControl SDK app with an existing consumer Smart Life account. They must register an account for this SDK app (the same email can be used); existing Smart Life devices do not automatically transfer.
 
 **Why:** Tuya's official Help Center confirms different apps have isolated account systems: https://support.tuya.com/en/help/_detail/K9hrdzaocxaoa . Incorrect UI guidance led to valid Smart Life credentials being rejected by the custom app.

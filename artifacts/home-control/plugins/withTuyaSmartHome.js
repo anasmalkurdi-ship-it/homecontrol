@@ -39,13 +39,23 @@ function withTuyaSmartHome(config) {
       throw new Error('Could not find the iOS app target in the generated Podfile.');
     }
 
+    contents = contents
+      .replace(
+        "pod 'ThingSmartHomeKit', '~> 7.8.0'",
+        "pod 'ThingSmartHomeKit', '~> 7.11.0'",
+      )
+      .replace(
+        "pod 'ThingSmartBusinessExtensionKit', '~> 7.8.0'",
+        "pod 'ThingSmartBusinessExtensionKit', '~> 7.11.0'",
+      );
+
     const insertAt = targetMatch.index + targetMatch[0].length;
     const pods = [
       !contents.includes('use_modular_headers!') && '  use_modular_headers!',
       !contents.includes("pod 'ThingSmartHomeKit'") &&
-        "  pod 'ThingSmartHomeKit', '~> 7.8.0'",
+        "  pod 'ThingSmartHomeKit', '~> 7.11.0'",
       !contents.includes("pod 'ThingSmartBusinessExtensionKit'") &&
-        "  pod 'ThingSmartBusinessExtensionKit', '~> 7.8.0'",
+        "  pod 'ThingSmartBusinessExtensionKit', '~> 7.11.0'",
       !contents.includes("pod 'ThingSmartCryption'") &&
         "  pod 'ThingSmartCryption', :path => './ios_core_sdk'",
     ]
