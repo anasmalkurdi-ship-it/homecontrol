@@ -424,11 +424,31 @@ public final class TuyaSmartHomeModule: Module {
                 )
                 return
               }
-              promise.resolve([
-                "sceneId": sceneId,
-                "name": scene.name ?? name,
-                "enabled": true,
-              ])
+
+              guard let automation = ThingSmartScene(sceneId: sceneId) else {
+                promise.reject(
+                  "E_TUYA_SCENE_ENABLE",
+                  "Tuya created the automation but could not open it to enable it."
+                )
+                return
+              }
+
+              automation.enable(
+                success: {
+                  promise.resolve([
+                    "sceneId": sceneId,
+                    "name": scene.name ?? name,
+                    "enabled": true,
+                  ])
+                },
+                failure: { enableError in
+                  promise.reject(
+                    "E_TUYA_SCENE_ENABLE",
+                    "Tuya created the automation but could not enable it: "
+                      + (enableError?.localizedDescription ?? "Unknown Tuya error.")
+                  )
+                }
+              )
             },
             failure: { error in
               promise.reject(

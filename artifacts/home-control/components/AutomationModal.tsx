@@ -161,6 +161,14 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
       setOpenPicker(null);
       setRefreshVersion((version) => version + 1);
     } catch (cause) {
+      try {
+        const updatedAutomations = await TuyaSmartHome.listAutomations(
+          triggerControl.tuyaHomeId,
+        );
+        setAutomations(updatedAutomations);
+      } catch {
+        // Keep the original creation/enable error visible if the refresh fails.
+      }
       setError(
         cause instanceof Error
           ? cause.message
