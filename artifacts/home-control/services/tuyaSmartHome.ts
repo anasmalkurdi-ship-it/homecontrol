@@ -103,6 +103,12 @@ function requireNative(): TuyaNativeModule {
   return nativeModule;
 }
 
+function automationBuildError(): Error {
+  return new Error(
+    'This installed iOS app does not include Tuya automation support yet. The iOS app must be rebuilt with the current Tuya module.',
+  );
+}
+
 export const TuyaSmartHome = {
   isNativeAvailable: () => nativeModule !== null,
   sdkStatus: () => requireNative().sdkStatus(),
@@ -133,8 +139,13 @@ export const TuyaSmartHome = {
     homeId: string,
     dps: Record<string, boolean | number | string>,
   ) => requireNative().publishDps(deviceId, homeId, dps),
-  listAutomations: (homeId: string) =>
-    requireNative().listAutomations(homeId),
+  listAutomations: (homeId: string) => {
+    const native = requireNative();
+    if (typeof native.listAutomations !== 'function') {
+      return Promise.reject(automationBuildError());
+    }
+    return native.listAutomations(homeId);
+  },
   createSwitchAutomation: (
     homeId: string,
     name: string,
@@ -143,14 +154,20 @@ export const TuyaSmartHome = {
     targetDeviceId: string,
     targetDpId: string,
   ) =>
-    requireNative().createSwitchAutomation(
-      homeId,
-      name,
-      triggerDeviceId,
-      triggerDpId,
-      targetDeviceId,
-      targetDpId,
-    ),
+    (() => {
+      const native = requireNative();
+      if (typeof native.createSwitchAutomation !== 'function') {
+        return Promise.reject(automationBuildError());
+      }
+      return native.createSwitchAutomation(
+        homeId,
+        name,
+        triggerDeviceId,
+        triggerDpId,
+        targetDeviceId,
+        targetDpId,
+      );
+    })(),
   addListener: <K extends keyof TuyaNativeEvents>(
     eventName: K,
     listener: TuyaNativeEvents[K],
