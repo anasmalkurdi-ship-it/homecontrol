@@ -465,6 +465,139 @@ public final class TuyaSmartHomeModule: Module {
         }
       }
     }
+
+    AsyncFunction("createDeviceSchedule") {
+      (
+        homeId: String,
+        name: String,
+        deviceId: String,
+        dpId: String,
+        time: String,
+        loops: String,
+        turnOn: Bool,
+        promise: Promise
+      ) in
+      guard self.ensureConfigured(promise) else { return }
+      guard ThingSmartUser.sharedInstance().isLogin else {
+        promise.reject("E_TUYA_AUTH", "Sign in to your Tuya account first.")
+        return
+      }
+      guard let numericHomeId = Int64(homeId) else {
+        promise.reject("E_TUYA_HOME", "The selected Tuya home ID is invalid.")
+        return
+      }
+      let timeParts = time.split(separator: ":")
+      guard !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            !deviceId.isEmpty,
+            !dpId.isEmpty,
+            timeParts.count == 2,
+            let hour = Int(timeParts[0]),
+            let minute = Int(timeParts[1]),
+            (0...23).contains(hour),
+            (0...59).contains(minute),
+            loops.count == 7,
+            loops.allSatisfy({ $0 == "0" || $0 == "1" }),
+            loops.contains("1")
+      else {
+        promise.reject(
+          "E_TUYA_TIMER",
+          "Choose a valid time and at least one repeat day."
+        )
+        return
+      }
+
+      self.withLoadedHome(homeId: homeId) { home, error in
+        guard home != nil else {
+          promise.reject(
+            "E_TUYA_HOME",
+            error?.localizedDescription ?? "Tuya could not load this home's device list."
+          )
+          return
+        }
+        guard let device = self.device(for: deviceId) else {
+          promise.reject(
+            "E_TUYA_DEVICE",
+            "Tuya could not load the selected switch."
+          )
+          return
+        }
+
+        let scheduleDateFormatter = DateFormatter()
+        scheduleDateFormatter.locale = Locale(identifier: "en_US_POSIX")
+        scheduleDateFormatter.timeZone = NSTimeZone.default
+        scheduleDateFormatter.dateFormat = "yyyyMMdd"
+        let date = scheduleDateFormatter.string(from: Date())
+
+        let timeExpression =
+          ThingSmartSceneConditionExprBuilder.createTimerExpr(
+            withTimeZoneId: NSTimeZone.default.identifier,
+            loops: loops,
+            date: date,
+            time: time
+          )
+        let condition =
+          ThingSmartSceneConditionFactory.createTimerCondition(
+            with: timeExpression
+          )
+
+        let deviceModel = device.deviceModel
+        let action = ThingSmartSceneActionModel()
+        action.actionExecutor = "dpIssue"
+        action.entityId = deviceId
+        action.entityName = deviceModel.name ?? "Switch"
+        action.executorProperty = [dpId: turnOn]
+
+        let background =
+          "https://images.tuyacn.com/smart/rule/cover/starry.png"
+        ThingSmartScene.addNewScene(
+          withName: name,
+          homeId: numericHomeId,
+          background: background,
+          showFirstPage: false,
+          conditionList: [condition],
+          actionList: [action],
+          matchType: .any,
+          success: { scene in
+            guard let scene, let sceneId = scene.sceneId, !sceneId.isEmpty else {
+              promise.reject(
+                "E_TUYA_TIMER",
+                "Tuya created the timer but did not return its ID."
+              )
+              return
+            }
+            guard let savedScene = ThingSmartScene(sceneId: sceneId) else {
+              promise.reject(
+                "E_TUYA_TIMER",
+                "Tuya created the timer but could not open it to enable it."
+              )
+              return
+            }
+            savedScene.enable(
+              success: {
+                promise.resolve([
+                  "sceneId": sceneId,
+                  "name": scene.name ?? name,
+                  "enabled": true,
+                ])
+              },
+              failure: { enableError in
+                promise.reject(
+                  "E_TUYA_TIMER_ENABLE",
+                  "Tuya created the timer but could not enable it: "
+                    + (enableError?.localizedDescription ?? "Unknown Tuya error.")
+                )
+              }
+            )
+          },
+          failure: { error in
+            promise.reject(
+              "E_TUYA_TIMER",
+              error?.localizedDescription ?? "Unable to create the repeated timer."
+            )
+          }
+        )
+      }
+    }
   }
 
   private func configureSDK() {

@@ -55,12 +55,20 @@ type Room = {
   icon?: RoomIcon;
 };
 
+type DeviceSchedule = {
+  sceneId: string;
+  time: string;
+  days: string;
+  action: ShortcutAction;
+};
+
 type HomeControl = {
   id: string;
   roomId: string;
   name: string;
   kind: DeviceKind;
   customIcon?: DeviceIcon;
+  schedules?: DeviceSchedule[];
   wattage?: number;
   onShortcutName?: string;
   offShortcutName?: string;
@@ -166,6 +174,26 @@ const roomIconOptions: { icon: RoomIcon; label: string }[] = [
   { icon: 'stove', label: 'Kitchen' },
 ];
 
+const REPEAT_DAY_OPTIONS = [
+  { index: 0, label: 'Sun' },
+  { index: 1, label: 'Mon' },
+  { index: 2, label: 'Tue' },
+  { index: 3, label: 'Wed' },
+  { index: 4, label: 'Thu' },
+  { index: 5, label: 'Fri' },
+  { index: 6, label: 'Sat' },
+] as const;
+
+function formatScheduleDays(days: string) {
+  if (days === '1111111') return 'Every day';
+  if (days === '0111110') return 'Weekdays';
+  if (days === '1000001') return 'Weekends';
+  return REPEAT_DAY_OPTIONS
+    .filter(({ index }) => days[index] === '1')
+    .map(({ label }) => label)
+    .join(', ');
+}
+
 function createId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -266,7 +294,20 @@ function parseHomeData(raw: string | null): HomeData {
           (control.nameCustomized === undefined ||
             typeof control.nameCustomized === 'boolean') &&
           (control.isUnused === undefined ||
-            typeof control.isUnused === 'boolean'),
+            typeof control.isUnused === 'boolean') &&
+          (control.schedules === undefined ||
+            (Array.isArray(control.schedules) &&
+              control.schedules.every(
+                (schedule) =>
+                  !!schedule &&
+                  typeof schedule.sceneId === 'string' &&
+                  schedule.sceneId.length > 0 &&
+                  typeof schedule.time === 'string' &&
+                  /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(schedule.time) &&
+                  typeof schedule.days === 'string' &&
+                  /^[01]{7}$/.test(schedule.days) &&
+                  (schedule.action === 'on' || schedule.action === 'off'),
+              ))),
       )
         .map((control) => {
           const onShortcutName =
@@ -323,6 +364,9 @@ function parseHomeData(raw: string | null): HomeData {
               : {}),
             ...(typeof control.isUnused === 'boolean'
               ? { isUnused: control.isUnused }
+              : {}),
+            ...(Array.isArray(control.schedules)
+              ? { schedules: control.schedules }
               : {}),
           };
         })
@@ -704,6 +748,16 @@ export default function HomeScreen() {
   const [inchingSeconds, setInchingSeconds] = useState('2');
   const [inchingError, setInchingError] = useState<string | null>(null);
   const [inchingSaving, setInchingSaving] = useState(false);
+  const [scheduleTime, setScheduleTime] = useState('08:00');
+  const [selectedScheduleDays, setSelectedScheduleDays] = useState<number[]>([
+    0, 1, 2, 3, 4, 5, 6,
+  ]);
+  const [scheduleAction, setScheduleAction] = useState<ShortcutAction>('on');
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [deletingScheduleId, setDeletingScheduleId] = useState<string | null>(
+    null,
+  );
   const [onShortcutInput, setOnShortcutInput] = useState('');
   const [offShortcutInput, setOffShortcutInput] = useState('');
   const [roomName, setRoomName] = useState('');
@@ -1037,6 +1091,10 @@ export default function HomeScreen() {
         ? 'This device’s inching data is not in a format the app can safely edit.'
         : null,
     );
+    setScheduleTime('08:00');
+    setSelectedScheduleDays([0, 1, 2, 3, 4, 5, 6]);
+    setScheduleAction('on');
+    setScheduleError(null);
     setSettingsControlId(controlId);
   };
 
@@ -1159,6 +1217,124 @@ export default function HomeScreen() {
     } finally {
       setInchingSaving(false);
     }
+  };
+
+  const addDeviceSchedule = async () => {
+    const control = settingsControl;
+    const homeId = control?.tuyaHomeId;
+    const deviceId = control?.tuyaDeviceId;
+    const dpId = control ? getTuyaSwitchDpId(control) : null;
+    const time = scheduleTime.trim();
+
+    if (
+      !control ||
+      control.controlMethod !== 'tuya-sdk' ||
+      !homeId ||
+      !deviceId ||
+      !dpId
+    ) {
+      setScheduleError('This ticket is not linked to a Tuya switch.');
+      return;
+    }
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+      setScheduleError('Enter a valid 24-hour time, such as 08:30.');
+      return;
+    }
+    if (selectedScheduleDays.length === 0) {
+      setScheduleError('Choose at least one day for this timer to repeat.');
+      return;
+    }
+
+    const days = REPEAT_DAY_OPTIONS.map(({ index }) =>
+      selectedScheduleDays.includes(index) ? '1' : '0',
+    ).join('');
+    const actionLabel = scheduleAction.toUpperCase();
+    const name = `${control.name} ${actionLabel} ${time}`;
+
+    setScheduleSaving(true);
+    setScheduleError(null);
+    try {
+      const created = await TuyaSmartHome.createDeviceSchedule(
+        homeId,
+        name,
+        deviceId,
+        dpId,
+        time,
+        days,
+        scheduleAction === 'on',
+      );
+      const schedule: DeviceSchedule = {
+        sceneId: created.sceneId,
+        time,
+        days,
+        action: scheduleAction,
+      };
+      setData((current) => ({
+        ...current,
+        controls: current.controls.map((item) =>
+          item.id === control.id
+            ? { ...item, schedules: [...(item.schedules ?? []), schedule] }
+            : item,
+        ),
+      }));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      setScheduleError(
+        error instanceof Error
+          ? error.message
+          : 'Could not create this repeated timer.',
+      );
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  const deleteDeviceSchedule = async (schedule: DeviceSchedule) => {
+    const homeId = settingsControl?.tuyaHomeId;
+    if (!settingsControl || !homeId) return;
+
+    setDeletingScheduleId(schedule.sceneId);
+    setScheduleError(null);
+    try {
+      await TuyaSmartHome.deleteAutomation(homeId, schedule.sceneId);
+      setData((current) => ({
+        ...current,
+        controls: current.controls.map((item) =>
+          item.id === settingsControl.id
+            ? {
+                ...item,
+                schedules: (item.schedules ?? []).filter(
+                  (saved) => saved.sceneId !== schedule.sceneId,
+                ),
+              }
+            : item,
+        ),
+      }));
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      setScheduleError(
+        error instanceof Error
+          ? error.message
+          : 'Could not delete this repeated timer.',
+      );
+    } finally {
+      setDeletingScheduleId(null);
+    }
+  };
+
+  const confirmDeleteDeviceSchedule = (schedule: DeviceSchedule) => {
+    Alert.alert(
+      'Delete repeated timer?',
+      `${schedule.time} · ${formatScheduleDays(schedule.days)} · ${schedule.action.toUpperCase()}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => void deleteDeviceSchedule(schedule),
+        },
+      ],
+    );
   };
 
   const saveShortcutNames = () => {
@@ -1430,6 +1606,17 @@ export default function HomeScreen() {
         visible={automationsVisible}
         controls={automationControls}
         onClose={() => setAutomationsVisible(false)}
+        onSceneDeleted={(sceneId) => {
+          setData((current) => ({
+            ...current,
+            controls: current.controls.map((control) => ({
+              ...control,
+              schedules: (control.schedules ?? []).filter(
+                (schedule) => schedule.sceneId !== sceneId,
+              ),
+            })),
+          }));
+        }}
       />
       <View style={styles.header}>
         <View style={styles.brandRow}>
@@ -2514,6 +2701,270 @@ export default function HomeScreen() {
                       account.
                     </Text>
                   </View>
+                  {getTuyaSwitchDpId(settingsControl) ? (
+                    <View
+                      style={styles.scheduleSection}
+                      testID="device-repeated-timers"
+                    >
+                      <View style={styles.wattageField}>
+                        <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                          Repeated timer
+                        </Text>
+                        <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                          Runs through Tuya even when Home Control is closed.
+                          Time follows this iPhone’s local time.
+                        </Text>
+                      </View>
+                      <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                        Time
+                      </Text>
+                      <TextInput
+                        value={scheduleTime}
+                        onChangeText={(value) => {
+                          setScheduleTime(value);
+                          setScheduleError(null);
+                        }}
+                        placeholder="08:30"
+                        placeholderTextColor={colors.mutedForeground}
+                        keyboardType="numbers-and-punctuation"
+                        maxLength={5}
+                        accessibilityLabel="Repeated timer time"
+                        testID="device-schedule-time-input"
+                        style={[
+                          styles.textInput,
+                          {
+                            backgroundColor: colors.background,
+                            borderColor: colors.border,
+                            color: colors.foreground,
+                          },
+                        ]}
+                      />
+                      <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                        Repeat on
+                      </Text>
+                      <View style={styles.scheduleDayOptions}>
+                        {REPEAT_DAY_OPTIONS.map(({ index, label }) => {
+                          const selected = selectedScheduleDays.includes(index);
+                          return (
+                            <Pressable
+                              key={index}
+                              onPress={() => {
+                                setSelectedScheduleDays((current) =>
+                                  selected
+                                    ? current.filter((day) => day !== index)
+                                    : [...current, index].sort((a, b) => a - b),
+                                );
+                                setScheduleError(null);
+                              }}
+                              accessibilityRole="button"
+                              accessibilityLabel={`${label}${
+                                selected ? ', selected' : ''
+                              }`}
+                              accessibilityState={{ selected }}
+                              testID={`device-schedule-day-${index}`}
+                              style={({ pressed }) => [
+                                styles.scheduleDayOption,
+                                {
+                                  backgroundColor: selected
+                                    ? colors.primary
+                                    : colors.background,
+                                  borderColor: selected
+                                    ? colors.primary
+                                    : colors.border,
+                                },
+                                pressed && styles.pressed,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.deviceMeta,
+                                  {
+                                    color: selected
+                                      ? colors.primaryForeground
+                                      : colors.foreground,
+                                    fontWeight: '700',
+                                  },
+                                ]}
+                              >
+                                {label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                      <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                        Switch
+                      </Text>
+                      <View style={styles.scheduleActionRow}>
+                        {(['on', 'off'] as const).map((action) => {
+                          const selected = scheduleAction === action;
+                          return (
+                            <Pressable
+                              key={action}
+                              onPress={() => setScheduleAction(action)}
+                              accessibilityRole="button"
+                              accessibilityLabel={`Set scheduled action ${action}`}
+                              accessibilityState={{ selected }}
+                              testID={`device-schedule-action-${action}`}
+                              style={({ pressed }) => [
+                                styles.scheduleActionOption,
+                                {
+                                  backgroundColor: selected
+                                    ? colors.primary
+                                    : colors.background,
+                                  borderColor: selected
+                                    ? colors.primary
+                                    : colors.border,
+                                },
+                                pressed && styles.pressed,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.deviceName,
+                                  {
+                                    color: selected
+                                      ? colors.primaryForeground
+                                      : colors.foreground,
+                                  },
+                                ]}
+                              >
+                                {action.toUpperCase()}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                      {scheduleError ? (
+                        <Text
+                          style={[
+                            styles.deviceMeta,
+                            { color: colors.destructive },
+                          ]}
+                          accessibilityRole="alert"
+                        >
+                          {scheduleError}
+                        </Text>
+                      ) : null}
+                      <Pressable
+                        onPress={() => void addDeviceSchedule()}
+                        disabled={scheduleSaving}
+                        accessibilityRole="button"
+                        testID="add-device-schedule-button"
+                        style={({ pressed }) => [
+                          styles.submitButton,
+                          {
+                            backgroundColor: colors.primary,
+                            opacity: scheduleSaving ? 0.55 : 1,
+                          },
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        {scheduleSaving ? (
+                          <ActivityIndicator color={colors.primaryForeground} />
+                        ) : (
+                          <Text
+                            style={[
+                              styles.submitText,
+                              { color: colors.primaryForeground },
+                            ]}
+                          >
+                            Add repeated timer
+                          </Text>
+                        )}
+                      </Pressable>
+                      {settingsControl.schedules?.length ? (
+                        <View style={styles.scheduleList}>
+                          <Text
+                            style={[
+                              styles.deviceName,
+                              { color: colors.foreground },
+                            ]}
+                          >
+                            Saved timers
+                          </Text>
+                          {settingsControl.schedules.map((schedule) => (
+                            <View
+                              key={schedule.sceneId}
+                              style={[
+                                styles.scheduleCard,
+                                {
+                                  backgroundColor: colors.background,
+                                  borderColor: colors.border,
+                                },
+                              ]}
+                            >
+                              <MaterialCommunityIcons
+                                name={
+                                  schedule.action === 'on'
+                                    ? 'clock-check-outline'
+                                    : 'clock-outline'
+                                }
+                                size={20}
+                                color={colors.primary}
+                              />
+                              <View style={styles.scheduleCardInfo}>
+                                <Text
+                                  style={[
+                                    styles.deviceName,
+                                    { color: colors.foreground },
+                                  ]}
+                                >
+                                  {schedule.time} · {schedule.action.toUpperCase()}
+                                </Text>
+                                <Text
+                                  style={[
+                                    styles.deviceMeta,
+                                    { color: colors.mutedForeground },
+                                  ]}
+                                >
+                                  {formatScheduleDays(schedule.days)}
+                                </Text>
+                              </View>
+                              <Pressable
+                                onPress={() =>
+                                  confirmDeleteDeviceSchedule(schedule)
+                                }
+                                disabled={
+                                  deletingScheduleId === schedule.sceneId
+                                }
+                                accessibilityRole="button"
+                                accessibilityLabel={`Delete ${schedule.time} timer`}
+                                testID={`delete-device-schedule-${schedule.sceneId}`}
+                                style={({ pressed }) => [
+                                  styles.scheduleDeleteButton,
+                                  pressed && styles.pressed,
+                                ]}
+                              >
+                                {deletingScheduleId === schedule.sceneId ? (
+                                  <ActivityIndicator
+                                    size="small"
+                                    color={colors.destructive}
+                                  />
+                                ) : (
+                                  <MaterialCommunityIcons
+                                    name="delete-outline"
+                                    size={20}
+                                    color={colors.destructive}
+                                  />
+                                )}
+                              </Pressable>
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
+                    </View>
+                  ) : (
+                    <Text
+                      style={[
+                        styles.deviceMeta,
+                        { color: colors.mutedForeground },
+                      ]}
+                    >
+                      This Tuya ticket does not expose a switch that can be
+                      scheduled.
+                    </Text>
+                  )}
                   {settingsInchingDp && settingsInchingChannelId !== null ? (
                     <View style={styles.inchingSection} testID="inching-settings">
                       <View style={styles.wattageField}>
@@ -2638,6 +3089,16 @@ export default function HomeScreen() {
                   ) : null}
                 </>
               ) : (
+              <>
+              <View style={styles.wattageField}>
+                <Text style={[styles.deviceName, { color: colors.foreground }]}>
+                  Repeated timer
+                </Text>
+                <Text style={[styles.deviceMeta, { color: colors.mutedForeground }]}>
+                  Repeated timers are available for Tuya-linked switches.
+                  This ticket currently uses Shortcuts.
+                </Text>
+              </View>
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
                   ON Shortcut name
@@ -2702,6 +3163,7 @@ export default function HomeScreen() {
                   Enter the exact names from the Shortcuts app. The tile runs ON first, then alternates using its last requested action.
                 </Text>
               </View>
+              </>
               )}
               <View style={styles.wattageField}>
                 <Text style={[styles.deviceName, { color: colors.foreground }]}>
@@ -3123,6 +3585,43 @@ const styles = StyleSheet.create({
   wattageInputRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   wattageInput: { flex: 1 },
   wattageUnit: { fontSize: 13, fontWeight: '700' },
+  scheduleSection: { gap: 10, paddingTop: 8 },
+  scheduleDayOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  scheduleDayOption: {
+    minWidth: 40,
+    height: 38,
+    borderWidth: 1,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  scheduleActionRow: { flexDirection: 'row', gap: 8 },
+  scheduleActionOption: {
+    flex: 1,
+    minHeight: 44,
+    borderWidth: 1,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scheduleList: { gap: 8, paddingTop: 4 },
+  scheduleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  scheduleCardInfo: { flex: 1, gap: 2 },
+  scheduleDeleteButton: {
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   inchingSection: { gap: 10, paddingTop: 8 },
   inchingToggleRow: {
     minHeight: 42,

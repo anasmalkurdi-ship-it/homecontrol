@@ -91,6 +91,15 @@ type TuyaNativeModule = {
     targetDpId: string,
     targetIsOn: boolean,
   ): Promise<TuyaAutomation>;
+  createDeviceSchedule(
+    homeId: string,
+    name: string,
+    deviceId: string,
+    dpId: string,
+    time: string,
+    loops: string,
+    turnOn: boolean,
+  ): Promise<TuyaAutomation>;
 };
 
 const nativeModule =
@@ -182,6 +191,33 @@ export const TuyaSmartHome = {
         targetIsOn,
       );
     })(),
+  createDeviceSchedule: (
+    homeId: string,
+    name: string,
+    deviceId: string,
+    dpId: string,
+    time: string,
+    loops: string,
+    turnOn: boolean,
+  ) => {
+    const native = requireNative();
+    if (typeof native.createDeviceSchedule !== 'function') {
+      return Promise.reject(
+        new Error(
+          'This installed iOS app does not include repeated timers yet. Rebuild the Home Control iOS app with the current Tuya module.',
+        ),
+      );
+    }
+    return native.createDeviceSchedule(
+      homeId,
+      name,
+      deviceId,
+      dpId,
+      time,
+      loops,
+      turnOn,
+    );
+  },
   addListener: <K extends keyof TuyaNativeEvents>(
     eventName: K,
     listener: TuyaNativeEvents[K],

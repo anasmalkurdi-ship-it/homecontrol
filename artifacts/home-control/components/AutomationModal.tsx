@@ -30,11 +30,17 @@ type Props = {
   visible: boolean;
   controls: AutomationControl[];
   onClose: () => void;
+  onSceneDeleted?: (sceneId: string) => void;
 };
 
 type Picker = 'trigger' | 'action' | null;
 
-export function AutomationModal({ visible, controls, onClose }: Props) {
+export function AutomationModal({
+  visible,
+  controls,
+  onClose,
+  onSceneDeleted,
+}: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [triggerControlId, setTriggerControlId] = useState('');
@@ -192,6 +198,7 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
       setAutomations((current) =>
         current.filter((item) => item.sceneId !== automation.sceneId),
       );
+      onSceneDeleted?.(automation.sceneId);
       setSuccess(`Deleted “${automation.name}”.`);
     } catch (cause) {
       setError(
