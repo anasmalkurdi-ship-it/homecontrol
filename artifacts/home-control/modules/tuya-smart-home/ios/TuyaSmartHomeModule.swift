@@ -251,7 +251,7 @@ public final class TuyaSmartHomeModule: Module {
           return
         }
 
-        manager.getSceneList(withHomeId: numericHomeId) { scenes in
+        manager.getSimpleSceneList(withHomeId: numericHomeId) { scenes in
           let automations = (scenes ?? []).compactMap { scene -> [String: Any]? in
             let conditions =
               (scene.conditions as? [ThingSmartSceneConditionModel]) ?? []
@@ -390,7 +390,7 @@ public final class TuyaSmartHomeModule: Module {
               showFirstPage: false,
               conditionList: [condition],
               actionList: [action],
-              matchType: ThingSmartConditionMatchAll,
+              matchType: .any,
               success: { scene in
                 guard let sceneId = scene.sceneId, !sceneId.isEmpty else {
                   promise.reject(
