@@ -152,6 +152,9 @@ const deviceIconOptions: {
   { key: 'led-rope-light', label: 'LED rope light', icon: 'led-strip' },
   { key: 'mirror', label: 'Mirror', icon: 'mirror' },
   { key: 'door-sensor', label: 'Door sensor', icon: 'door-open' },
+  { key: 'swimming-pool', label: 'Swimming pool', icon: 'pool' },
+  { key: 'water-pump', label: 'Water pump', icon: 'water-pump' },
+  { key: 'waterfall', label: 'Waterfall', icon: 'waterfall' },
 ];
 
 const roomIconOptions: { icon: RoomIcon; label: string }[] = [
