@@ -321,9 +321,7 @@ public final class TuyaSmartHomeModule: Module {
           return
         }
         guard let triggerDevice = self.device(for: triggerDeviceId),
-              let targetDevice = self.device(for: targetDeviceId),
-              let triggerModel = triggerDevice.deviceModel,
-              let targetModel = targetDevice.deviceModel
+              let targetDevice = self.device(for: targetDeviceId)
         else {
           promise.reject(
             "E_TUYA_DEVICE",
@@ -331,13 +329,15 @@ public final class TuyaSmartHomeModule: Module {
           )
           return
         }
+        let triggerModel = triggerDevice.deviceModel
+        let targetModel = targetDevice.deviceModel
         guard let manager = ThingSmartSceneManager.sharedInstance() else {
           promise.reject("E_TUYA_SCENE", "Tuya's automation service is unavailable.")
           return
         }
 
         manager.getCondicationDeviceDPList(withDevId: triggerDeviceId) { dpModels in
-          let triggerDp = (dpModels ?? []).first {
+          let triggerDp = dpModels.first {
             String($0.dpId) == triggerDpId || $0.entitySubId == triggerDpId
           }
           guard let triggerDp else {
