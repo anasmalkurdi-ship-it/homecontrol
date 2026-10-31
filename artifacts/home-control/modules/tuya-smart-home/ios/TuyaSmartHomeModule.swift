@@ -385,7 +385,7 @@ public final class TuyaSmartHomeModule: Module {
             actionList: [action],
             matchType: .any,
             success: { scene in
-              guard let sceneId = scene.sceneId, !sceneId.isEmpty else {
+              guard let scene = scene, let sceneId = scene.sceneId, !sceneId.isEmpty else {
                 promise.reject(
                   "E_TUYA_SCENE",
                   "Tuya created the automation but did not return its ID."
