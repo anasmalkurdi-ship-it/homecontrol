@@ -372,52 +372,39 @@ public final class TuyaSmartHomeModule: Module {
           action.entityName = targetModel.name ?? "Switch"
           action.executorProperty = [targetDpId: true]
 
-          manager.getSmartSceneBackgroundCover(withsuccess: { covers in
-            guard let background = (covers as? [String])?.first,
-                  !background.isEmpty
-            else {
-              promise.reject(
-                "E_TUYA_SCENE",
-                "Tuya did not return a scene background image."
-              )
-              return
-            }
-
-            ThingSmartScene.addNewScene(
-              withName: name,
-              homeId: numericHomeId,
-              background: background,
-              showFirstPage: false,
-              conditionList: [condition],
-              actionList: [action],
-              matchType: .any,
-              success: { scene in
-                guard let sceneId = scene.sceneId, !sceneId.isEmpty else {
-                  promise.reject(
-                    "E_TUYA_SCENE",
-                    "Tuya created the automation but did not return its ID."
-                  )
-                  return
-                }
-                promise.resolve([
-                  "sceneId": sceneId,
-                  "name": scene.name ?? name,
-                  "enabled": true,
-                ])
-              },
-              failure: { error in
+          // Tuya's SDK 7.11 / SceneCoreKit 5.25 no longer exposes the
+          // background-cover list API. The SDK's cloud API documentation
+          // uses this built-in Tuya cover URL as a valid scene background.
+          let background = "https://images.tuyacn.com/smart/rule/cover/starry.png"
+          ThingSmartScene.addNewScene(
+            withName: name,
+            homeId: numericHomeId,
+            background: background,
+            showFirstPage: false,
+            conditionList: [condition],
+            actionList: [action],
+            matchType: .any,
+            success: { scene in
+              guard let sceneId = scene.sceneId, !sceneId.isEmpty else {
                 promise.reject(
                   "E_TUYA_SCENE",
-                  error?.localizedDescription ?? "Unable to create the Tuya automation."
+                  "Tuya created the automation but did not return its ID."
                 )
+                return
               }
-            )
-          }, failure: { error in
-            promise.reject(
-              "E_TUYA_SCENE",
-              error?.localizedDescription ?? "Unable to load Tuya scene backgrounds."
-            )
-          })
+              promise.resolve([
+                "sceneId": sceneId,
+                "name": scene.name ?? name,
+                "enabled": true,
+              ])
+            },
+            failure: { error in
+              promise.reject(
+                "E_TUYA_SCENE",
+                error?.localizedDescription ?? "Unable to create the Tuya automation."
+              )
+            }
+          )
         } failure: { error in
           promise.reject(
             "E_TUYA_SCENE",
