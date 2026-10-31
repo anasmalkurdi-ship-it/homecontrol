@@ -80,13 +80,16 @@ type TuyaNativeModule = {
     dps: Record<string, boolean | number | string>,
   ): Promise<void>;
   listAutomations(homeId: string): Promise<TuyaAutomation[]>;
+  deleteAutomation(homeId: string, sceneId: string): Promise<void>;
   createSwitchAutomation(
     homeId: string,
     name: string,
     triggerDeviceId: string,
     triggerDpId: string,
+    triggerIsOn: boolean,
     targetDeviceId: string,
     targetDpId: string,
+    targetIsOn: boolean,
   ): Promise<TuyaAutomation>;
 };
 
@@ -146,13 +149,22 @@ export const TuyaSmartHome = {
     }
     return native.listAutomations(homeId);
   },
+  deleteAutomation: (homeId: string, sceneId: string) => {
+    const native = requireNative();
+    if (typeof native.deleteAutomation !== 'function') {
+      return Promise.reject(automationBuildError());
+    }
+    return native.deleteAutomation(homeId, sceneId);
+  },
   createSwitchAutomation: (
     homeId: string,
     name: string,
     triggerDeviceId: string,
     triggerDpId: string,
+    triggerIsOn: boolean,
     targetDeviceId: string,
     targetDpId: string,
+    targetIsOn: boolean,
   ) =>
     (() => {
       const native = requireNative();
@@ -164,8 +176,10 @@ export const TuyaSmartHome = {
         name,
         triggerDeviceId,
         triggerDpId,
+        triggerIsOn,
         targetDeviceId,
         targetDpId,
+        targetIsOn,
       );
     })(),
   addListener: <K extends keyof TuyaNativeEvents>(

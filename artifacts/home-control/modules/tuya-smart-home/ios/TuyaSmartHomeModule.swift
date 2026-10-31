@@ -278,14 +278,46 @@ public final class TuyaSmartHomeModule: Module {
       }
     }
 
+    AsyncFunction("deleteAutomation") {
+      (homeId: String, sceneId: String, promise: Promise) in
+      guard self.ensureConfigured(promise) else { return }
+      guard ThingSmartUser.sharedInstance().isLogin else {
+        promise.reject("E_TUYA_AUTH", "Sign in to your Tuya account first.")
+        return
+      }
+      guard let numericHomeId = Int64(homeId), !sceneId.isEmpty else {
+        promise.reject("E_TUYA_SCENE", "The selected Tuya automation is invalid.")
+        return
+      }
+      guard let scene = ThingSmartScene(sceneId: sceneId) else {
+        promise.reject("E_TUYA_SCENE", "Tuya could not open this automation.")
+        return
+      }
+
+      scene.delete(
+        homeId: numericHomeId,
+        success: {
+          promise.resolve(nil)
+        },
+        failure: { error in
+          promise.reject(
+            "E_TUYA_SCENE",
+            error?.localizedDescription ?? "Unable to delete the Tuya automation."
+          )
+        }
+      )
+    }
+
     AsyncFunction("createSwitchAutomation") {
       (
         homeId: String,
         name: String,
         triggerDeviceId: String,
         triggerDpId: String,
+        triggerIsOn: Bool,
         targetDeviceId: String,
         targetDpId: String,
+        targetIsOn: Bool,
         promise: Promise
       ) in
       guard self.ensureConfigured(promise) else { return }
@@ -350,7 +382,7 @@ public final class TuyaSmartHomeModule: Module {
 
           let expression = ThingSmartSceneConditionExprBuilder.createBoolExpr(
             withType: triggerDp.entitySubId ?? triggerDpId,
-            isTrue: true,
+            isTrue: triggerIsOn,
             exprType: .device
           )
           let conditionResult = ThingSmartSceneConditionFactory.createDeviceCondition(
@@ -370,7 +402,7 @@ public final class TuyaSmartHomeModule: Module {
           action.actionExecutor = "dpIssue"
           action.entityId = targetDeviceId
           action.entityName = targetModel.name ?? "Switch"
-          action.executorProperty = [targetDpId: true]
+          action.executorProperty = [targetDpId: targetIsOn]
 
           // Tuya's SDK 7.11 / SceneCoreKit 5.25 no longer exposes the
           // background-cover list API. The SDK's cloud API documentation

@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Alert,
   ActivityIndicator,
   Modal,
   Pressable,
@@ -37,10 +38,13 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [triggerControlId, setTriggerControlId] = useState('');
+  const [triggerIsOn, setTriggerIsOn] = useState(true);
   const [actionControlId, setActionControlId] = useState('');
+  const [actionIsOn, setActionIsOn] = useState(true);
   const [openPicker, setOpenPicker] = useState<Picker>(null);
   const [automations, setAutomations] = useState<TuyaAutomation[]>([]);
   const [loadingAutomations, setLoadingAutomations] = useState(false);
+  const [deletingSceneId, setDeletingSceneId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -85,7 +89,9 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
         )
       : undefined;
     setTriggerControlId(firstTrigger?.id ?? '');
+    setTriggerIsOn(true);
     setActionControlId(firstAction?.id ?? '');
+    setActionIsOn(true);
     setOpenPicker(null);
     setError(null);
     setSuccess(null);
@@ -136,7 +142,9 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
     setSaving(true);
     setError(null);
     setSuccess(null);
-    const name = `When ${triggerControl.name} turns on, turn on ${actionControl.name}`;
+    const triggerState = triggerIsOn ? 'on' : 'off';
+    const actionState = actionIsOn ? 'on' : 'off';
+    const name = `When ${triggerControl.name} turns ${triggerState}, turn ${actionState} ${actionControl.name}`;
 
     try {
       const created = await TuyaSmartHome.createSwitchAutomation(
@@ -144,8 +152,10 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
         name,
         triggerControl.tuyaDeviceId,
         triggerControl.tuyaSwitchDpId,
+        triggerIsOn,
         actionControl.tuyaDeviceId,
         actionControl.tuyaSwitchDpId,
+        actionIsOn,
       );
       setSuccess(`Created “${created.name}”. It runs through Tuya when this app is closed.`);
       setOpenPicker(null);
@@ -159,6 +169,46 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
     } finally {
       setSaving(false);
     }
+  };
+
+  const deleteAutomation = async (automation: TuyaAutomation) => {
+    if (!triggerControl) return;
+    setDeletingSceneId(automation.sceneId);
+    setError(null);
+    setSuccess(null);
+    try {
+      await TuyaSmartHome.deleteAutomation(
+        triggerControl.tuyaHomeId,
+        automation.sceneId,
+      );
+      setAutomations((current) =>
+        current.filter((item) => item.sceneId !== automation.sceneId),
+      );
+      setSuccess(`Deleted “${automation.name}”.`);
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Could not delete the Tuya automation.',
+      );
+    } finally {
+      setDeletingSceneId(null);
+    }
+  };
+
+  const confirmDeleteAutomation = (automation: TuyaAutomation) => {
+    Alert.alert(
+      'Delete automation?',
+      `“${automation.name}” will be removed from your Tuya home.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => void deleteAutomation(automation),
+        },
+      ],
+    );
   };
 
   const renderControlPicker = (
@@ -381,13 +431,58 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
                         { color: colors.mutedForeground },
                       ]}
                     >
-                      WHEN THIS SWITCH TURNS ON
+                      WHEN THIS SWITCH TURNS {triggerIsOn ? 'ON' : 'OFF'}
                     </Text>
                     {renderControlPicker(
                       'trigger',
                       triggerOptions,
                       triggerControl,
                     )}
+                    <View style={styles.triggerStateGroup}>
+                      {[true, false].map((isOn) => {
+                        const selected = triggerIsOn === isOn;
+                        const label = isOn ? 'Turns on' : 'Turns off';
+                        return (
+                          <Pressable
+                            key={label}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Trigger when the switch ${label.toLowerCase()}`}
+                            accessibilityState={{ selected }}
+                            testID={`automation-trigger-state-${isOn ? 'on' : 'off'}`}
+                            onPress={() => {
+                              setTriggerIsOn(isOn);
+                              setError(null);
+                              setSuccess(null);
+                            }}
+                            style={({ pressed }) => [
+                              styles.triggerStateOption,
+                              {
+                                backgroundColor: selected
+                                  ? colors.primary
+                                  : colors.card,
+                                borderColor: selected
+                                  ? colors.primary
+                                  : colors.border,
+                              },
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.triggerStateText,
+                                {
+                                  color: selected
+                                    ? colors.primaryForeground
+                                    : colors.foreground,
+                                },
+                              ]}
+                            >
+                              {label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
                   </View>
                 </View>
 
@@ -415,7 +510,7 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
                         { color: colors.mutedForeground },
                       ]}
                     >
-                      TURN ON THIS SWITCH
+                      TURN THIS SWITCH {actionIsOn ? 'ON' : 'OFF'}
                     </Text>
                     {actionOptions.length > 0 ? (
                       renderControlPicker('action', actionOptions, actionControl)
@@ -429,6 +524,51 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
                         Choose a different Tuya device for the action.
                       </Text>
                     )}
+                    <View style={styles.triggerStateGroup}>
+                      {[true, false].map((isOn) => {
+                        const selected = actionIsOn === isOn;
+                        const label = isOn ? 'Turn on' : 'Turn off';
+                        return (
+                          <Pressable
+                            key={label}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Set the action to ${label.toLowerCase()}`}
+                            accessibilityState={{ selected }}
+                            testID={`automation-action-state-${isOn ? 'on' : 'off'}`}
+                            onPress={() => {
+                              setActionIsOn(isOn);
+                              setError(null);
+                              setSuccess(null);
+                            }}
+                            style={({ pressed }) => [
+                              styles.triggerStateOption,
+                              {
+                                backgroundColor: selected
+                                  ? colors.primary
+                                  : colors.card,
+                                borderColor: selected
+                                  ? colors.primary
+                                  : colors.border,
+                              },
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.triggerStateText,
+                                {
+                                  color: selected
+                                    ? colors.primaryForeground
+                                    : colors.foreground,
+                                },
+                              ]}
+                            >
+                              {label}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
                   </View>
                 </View>
               </View>
@@ -475,14 +615,24 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
                     EXISTING AUTOMATIONS
                   </Text>
                   {automations.map((automation) => (
-                    <View
+                    <Pressable
                       key={automation.sceneId}
-                      style={[
+                      accessibilityRole="button"
+                      accessibilityHint="Press and hold to delete this automation"
+                      accessibilityState={{
+                        disabled: deletingSceneId === automation.sceneId,
+                      }}
+                      disabled={deletingSceneId === automation.sceneId}
+                      delayLongPress={450}
+                      onLongPress={() => confirmDeleteAutomation(automation)}
+                      testID={`automation-row-${automation.sceneId}`}
+                      style={({ pressed }) => [
                         styles.automationRow,
                         {
                           backgroundColor: colors.card,
                           borderColor: colors.border,
                         },
+                        pressed && styles.pressed,
                       ]}
                     >
                       <MaterialCommunityIcons
@@ -507,20 +657,29 @@ export function AutomationModal({ visible, controls, onClose }: Props) {
                       >
                         {automation.name}
                       </Text>
-                      <Text
-                        style={[
-                          styles.enabledLabel,
-                          {
-                            color: automation.enabled
-                              ? colors.primary
-                              : colors.mutedForeground,
-                          },
-                        ]}
-                      >
-                        {automation.enabled ? 'ON' : 'OFF'}
-                      </Text>
-                    </View>
+                      {deletingSceneId === automation.sceneId ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <Text
+                          style={[
+                            styles.enabledLabel,
+                            {
+                              color: automation.enabled
+                                ? colors.primary
+                                : colors.mutedForeground,
+                            },
+                          ]}
+                        >
+                          {automation.enabled ? 'ON' : 'OFF'}
+                        </Text>
+                      )}
+                    </Pressable>
                   ))}
+                  <Text
+                    style={[styles.deleteHint, { color: colors.mutedForeground }]}
+                  >
+                    Press and hold an automation to delete it.
+                  </Text>
                 </View>
               ) : null}
             </>
@@ -628,6 +787,17 @@ const styles = StyleSheet.create({
   stepCopy: { flex: 1, gap: 8 },
   stepLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 1.1 },
   connector: { width: 2, height: 14, marginLeft: 17, opacity: 0.8 },
+  triggerStateGroup: { flexDirection: 'row', gap: 8, marginTop: 2 },
+  triggerStateOption: {
+    flex: 1,
+    minHeight: 40,
+    borderWidth: 1,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  triggerStateText: { fontSize: 12, fontWeight: '700' },
   pickerGroup: { gap: 6 },
   choiceButton: {
     minHeight: 53,
@@ -679,6 +849,7 @@ const styles = StyleSheet.create({
   },
   automationName: { flex: 1, fontSize: 12, fontWeight: '600' },
   enabledLabel: { fontSize: 9, fontWeight: '800', letterSpacing: 0.7 },
+  deleteHint: { fontSize: 11, lineHeight: 16 },
   emptyCard: {
     borderWidth: 1,
     borderRadius: 20,
